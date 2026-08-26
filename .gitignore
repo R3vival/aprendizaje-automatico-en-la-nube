@@ -60,7 +60,8 @@ credentials
 .secrets/
 
 # --- Datos (se descargan con `make data`, se verifican por hash) ---
-data/raw/
+data/raw/*
+!data/raw/metadata.json
 data/processed/
 data/interim/
 data/external/
