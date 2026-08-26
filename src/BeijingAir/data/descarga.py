@@ -91,9 +91,9 @@ def extraer(zip_path: Path) -> Path:
 
 def cargar_crudo() -> pd.DataFrame:
     """Junta los 12 CSV (uno por estacion) y construye el eje temporal."""
-    csvs = sorted(DIR_EXTRAIDO.rglob("*.csv"))
+    csvs = sorted(DIR_EXTRAIDO.rglob("PRSA_Data_*.csv"))
     if not csvs:
-        raise FileNotFoundError(f"No hay CSV en {DIR_EXTRAIDO}. Corre extraer() antes.")
+        raise FileNotFoundError(f"No hay CSV de Beijing en {DIR_EXTRAIDO}.")
     df = pd.concat([pd.read_csv(c) for c in csvs], ignore_index=True)
     df[COL_TIEMPO] = pd.to_datetime(df[["year", "month", "day", "hour"]])
     return df.sort_values(COL_TIEMPO).reset_index(drop=True)

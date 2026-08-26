@@ -1,0 +1,5 @@
+from BeijingAir.data.descarga import cargar_crudo
+
+df = cargar_crudo()
+print(df.shape)
+print(df.head())
