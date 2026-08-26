@@ -80,6 +80,8 @@ models/
 # que hacia invisible a `data/raw/metadata.json` bajo la regla global `*.json`.
 # Lo vigila tests/unit/test_config_y_convenciones.py.
 !src/taxi/models/
+# Lo mismo para el paquete de este proyecto: src/BeijingAir/models/ es codigo.
+!src/BeijingAir/models/
 # El starter template del proyecto final tiene el mismo paquete `models/` dentro
 # de `src/<paquete>/`. Su propio .gitignore ya lo desexcluye, pero esa negacion
 # solo funciona mientras el archivo anidado exista: si alguien lo borra por
