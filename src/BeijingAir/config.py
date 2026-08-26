@@ -14,27 +14,27 @@ from pathlib import Path
 from typing import Final
 
 __all__ = [
-    "PROYECTO",
-    "VERSION",
-    "PROJECT_ROOT",
-    "DATA_DIR",
-    "RAW_DIR",
-    "PROCESSED_DIR",
-    "REPORTS_DIR",
-    "URL_DATASET",
     "ARCHIVO_ZIP",
+    "COL_TIEMPO",
+    "DATA_DIR",
+    "FILAS_POR_PARTICION",
     "FUENTE",
     "LICENCIA",
     "LICENCIA_URL",
-    "Particion",
-    "COL_TIEMPO",
-    "PARTICIONES_TRAIN",
-    "PARTICION_VALID",
-    "PARTICION_TEST",
     "PARTICIONES_PRODUCCION",
-    "TODAS_LAS_PARTICIONES",
-    "FILAS_POR_PARTICION",
+    "PARTICIONES_TRAIN",
+    "PARTICION_TEST",
+    "PARTICION_VALID",
+    "PROCESSED_DIR",
+    "PROJECT_ROOT",
+    "PROYECTO",
+    "RAW_DIR",
+    "REPORTS_DIR",
     "SEMILLA",
+    "TODAS_LAS_PARTICIONES",
+    "URL_DATASET",
+    "VERSION",
+    "Particion",
     "asegurar_directorios",
 ]
 
@@ -60,14 +60,14 @@ REPORTS_DIR: Final[Path] = PROJECT_ROOT / "reports"
 # Fuente del dato
 # =============================================================================
 URL_DATASET: Final[str] = (
-    "https://archive.ics.uci.edu/static/public/501/"
-    "beijing+multi+site+air+quality+data.zip"
+    "https://archive.ics.uci.edu/static/public/501/beijing+multi+site+air+quality+data.zip"
 )
 ARCHIVO_ZIP: Final[str] = "beijing-multi-site-air-quality.zip"
 
 FUENTE: Final[str] = "UCI Machine Learning Repository, dataset 501"
 LICENCIA: Final[str] = "CC BY 4.0"
 LICENCIA_URL: Final[str] = "https://creativecommons.org/licenses/by/4.0/"
+
 
 # =============================================================================
 # Particiones - FIJAS. No usar datetime.now().
@@ -91,9 +91,7 @@ class Particion:
 #: Eje temporal. Se construye a partir de year/month/day/hour del CSV crudo.
 COL_TIEMPO: Final[str] = "datetime"
 
-PARTICIONES_TRAIN: Final[tuple[Particion, ...]] = (
-    Particion("train", "2013-03-01", "2015-06-30"),
-)
+PARTICIONES_TRAIN: Final[tuple[Particion, ...]] = (Particion("train", "2013-03-01", "2015-06-30"),)
 PARTICION_VALID: Final[Particion] = Particion("valid", "2015-07-01", "2015-12-31")
 PARTICION_TEST: Final[Particion] = Particion("test", "2016-01-01", "2016-06-30")
 PARTICIONES_PRODUCCION: Final[tuple[Particion, ...]] = (

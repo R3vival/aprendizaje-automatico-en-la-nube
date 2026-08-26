@@ -12,9 +12,21 @@ para estructura, convenciones y configuración.
 
 ## Empezando
 
+> **Requisito de shell.** Los comandos `make` están escritos para **Bash**
+> (`Makefile` usa `SHELL := /bin/bash` y herramientas de Unix como `grep`,
+> `awk` y `find`).
+> - **macOS/Linux:** funcionan tal cual en la terminal normal.
+> - **Windows:** ejecutalos desde **Git Bash** (ver abajo), no desde
+>   PowerShell/CMD. Desde PowerShell `make` usa `cmd.exe`, que no entiende esas
+>   herramientas y falla.
+
 ```bash
 make setup        # instala dependencias y los hooks de pre-commit
 make check        # lint + tipos + tests, lo mismo que verifica el CI
+# Windows: abrir "Git Bash" desde el menú Inicio, ir al proyecto y ejecutar:
+cd aprendizaje-automatico-en-la-nube
+make setup
+make check
 ```
 
 ## Estructura

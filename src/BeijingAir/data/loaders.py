@@ -1,27 +1,23 @@
-"""Descarga, verificacion por hash y preparacion de datos.
+"""Descarga, verificacion por hash y preparacion del dataset Beijing.
 
 Cuatro decisiones que conviene copiar tal cual:
 
-1. **Particiones fijas** (``config.py``), nunca ``datetime.now()``. Un pipeline
-   que pide "el mes actual" deja de funcionar el dia que el proveedor se retrasa,
-   y el fallo aparece en clase o en la demo, no en desarrollo.
-2. **Verificacion por hash**. Se registra el SHA-256 de cada archivo en
-   ``data/raw/metadata.json``. Si el proveedor republica un archivo, la metrica
-   que reportaste contra la version anterior deja de ser comparable, y quieres
-   enterarte por un aviso y no por un resultado raro tres semanas despues.
+1. **Particiones fijas** (``config.py``), nunca ``datetime.now()``. Beijing viene
+   en UN archivo que cubre 2013-03 a 2017-02, asi que una particion es un rango
+   temporal (ver ``config.Particion``), no un archivo separado.
+2. **Verificacion por hash**. Se registra el SHA-256 del ZIP en
+   ``data/raw/metadata.json``. Si el proveedor republica el archivo, la metrica
+   que reportaste deja de ser comparable y quieres enterarte por un aviso.
 3. **Muestreo determinista** a un tamano fijo, para que entrenar tome segundos.
-4. El casteo de categoricas a string ocurre en ``features/contract.py``, no aqui.
-   Castear el dataframe crudo completo convierte tambien las numericas.
+4. **Imputacion por columna, con indicador de ausencia.** Nunca ``fillna(0)``
+   sobre un contaminante: afirmaria aire limpio donde el sensor callo.
 
-TODO(estudiante) 11: implementa ``leer_particion`` para tu fuente real. El resto
-del modulo deberia funcionar sin cambios si tu fuente entrega un archivo por
-particion.
+El crudo concatenado se cachea en ``data/processed/beijing_crudo.parquet`` para
+no re-leer los 12 CSV (uno por estacion) en cada particion.
 """
 
 from __future__ import annotations
 
-import hashlib
-import json
 import logging
 from pathlib import Path
 
@@ -30,125 +26,70 @@ import pandas as pd
 from BeijingAir.config import (
     FILAS_POR_PARTICION,
     PROCESSED_DIR,
-    RAW_DIR,
     SEMILLA,
     Particion,
 )
 from BeijingAir.data import contract as dc
+from BeijingAir.data.descarga import cargar_crudo, descargar, extraer
 from BeijingAir.features import contract as fc
 
 logger = logging.getLogger(__name__)
 
-METADATA_PATH = RAW_DIR / "metadata.json"
-_CHUNK = 1 << 20  # 1 MiB
+CACHE_CRUDO = PROCESSED_DIR / "beijing_crudo.parquet"
 
 
-def sha256(path: Path) -> str:
-    """SHA-256 del archivo, leido por bloques para no cargarlo en memoria."""
-    h = hashlib.sha256()
-    with path.open("rb") as fh:
-        while chunk := fh.read(_CHUNK):
-            h.update(chunk)
-    return h.hexdigest()
+def asegurar_crudo() -> pd.DataFrame:
+    """Devuelve el crudo completo cacheado, descargandolo si hace falta.
 
-
-def leer_metadata() -> dict[str, dict]:
-    """Lee ``data/raw/metadata.json``, o ``{}`` si no existe o esta corrupto."""
-    if not METADATA_PATH.exists():
-        return {}
-    try:
-        return json.loads(METADATA_PATH.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
-        logger.warning("metadata.json corrupto; se regenera")
-        return {}
-
-
-def escribir_metadata(meta: dict[str, dict]) -> None:
-    """Escribe el metadata ordenado, para que el diff en git sea legible.
-
-    Ojo con el .gitignore: este archivo SI va al repositorio. Es la procedencia
-    de tus datos. Una regla `*.json` global lo excluye en silencio y te deja sin
-    evidencia de con que datos entrenaste; el .gitignore de este template tiene
-    la excepcion explicita.
+    El cache existe para no re-leer los 12 CSV en cada particion. El dato en si
+    no se versiona; solo ``data/raw/metadata.json`` registra su procedencia.
     """
-    METADATA_PATH.parent.mkdir(parents=True, exist_ok=True)
-    METADATA_PATH.write_text(
-        json.dumps(meta, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-
-
-def descargar_particion(particion: Particion, *, forzar: bool = False) -> Path:
-    """Descarga una particion y registra su hash, url, tamano y licencia.
-
-    Si el archivo ya existe y su hash coincide con el registrado, no se vuelve a
-    descargar. Si existe pero el hash NO coincide, se avisa fuerte.
-
-    Args:
-        particion: la particion a descargar.
-        forzar: re-descarga aunque el archivo exista.
-
-    Returns:
-        Ruta local del archivo descargado.
-    """
-    import requests  # import local: el resto del modulo no necesita red
-
-    RAW_DIR.mkdir(parents=True, exist_ok=True)
-    destino = RAW_DIR / particion.nombre_archivo
-    meta = leer_metadata()
-    registrado = meta.get(particion.nombre_archivo, {})
-
-    if destino.exists() and not forzar:
-        actual = sha256(destino)
-        esperado = registrado.get("sha256")
-        if esperado and actual != esperado:
-            logger.warning(
-                "HASH DISTINTO para %s.\n  registrado: %s\n  actual:     %s\n"
-                "El proveedor republico el archivo: las metricas calculadas con "
-                "la version anterior ya no son comparables.",
-                particion.nombre_archivo,
-                esperado,
-                actual,
-            )
-        else:
-            logger.info("%s ya esta descargado (hash verificado)", particion)
-            return destino
-
-    logger.info("Descargando %s ...", particion.url)
-    respuesta = requests.get(particion.url, stream=True, timeout=120)
-    respuesta.raise_for_status()
-    tmp = destino.with_suffix(destino.suffix + ".part")
-    with tmp.open("wb") as fh:
-        for chunk in respuesta.iter_content(chunk_size=_CHUNK):
-            fh.write(chunk)
-    tmp.replace(destino)
-
-    meta[particion.nombre_archivo] = {
-        "url": particion.url,
-        "sha256": sha256(destino),
-        "bytes": destino.stat().st_size,
-        "particion": particion.etiqueta,
-        # TODO(estudiante) 12: fuente y licencia REALES. No son formalidad:
-        # sin ellas no puedes publicar la dataset card ni defender el uso.
-        "fuente": "TODO: nombre del proveedor",
-        "licencia": "TODO: licencia exacta y su URL",
-    }
-    escribir_metadata(meta)
-    logger.info("Guardado en %s", destino)
-    return destino
+    if CACHE_CRUDO.exists():
+        return pd.read_parquet(CACHE_CRUDO)
+    PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
+    zip_path = descargar()
+    extraer(zip_path)
+    df = cargar_crudo()
+    df.to_parquet(CACHE_CRUDO, index=False)
+    logger.info("Crudo cacheado en %s (%d filas)", CACHE_CRUDO, len(df))
+    return df
 
 
 def leer_particion(particion: Particion) -> pd.DataFrame:
-    """Lee una particion ya descargada a un DataFrame.
+    """Lee una particion (rango temporal) del crudo cacheado."""
+    crudo = asegurar_crudo()
+    mascara = (crudo[fc.COL_TIEMPO] >= particion.desde) & (crudo[fc.COL_TIEMPO] <= particion.hasta)
+    return crudo.loc[mascara].reset_index(drop=True)
 
-    TODO(estudiante) 11: adapta el formato. Parquet por defecto porque preserva
-    tipos y es columnar; si tu fuente es CSV, pasa `dtype=` explicito y
-    `parse_dates=` en lugar de dejar que pandas adivine.
+
+def limpiar(df: pd.DataFrame) -> pd.DataFrame:
+    """Aplica la estrategia de imputacion y los filtros de negocio.
+
+    Estrategia documentada (ver docs/dataset-card.md):
+
+    - El **target** (``PM2.5``) NO se imputa: inventar una etiqueta ensena al
+      modelo a replicar un sensor que no existio. Las filas con target nulo se
+      descartan (2,1 % del total).
+    - Las **numericas** (contaminantes y meteorologia) se imputan con la mediana
+      de la columna, y se agrega la columna indicadora ``<col>_era_nulo`` para
+      que el modelo pueda usar la ausencia como senal en lugar de confundirla
+      con el valor imputado.
+    - La **categorica** ``wd`` se rellena con ``desconocido``.
+
+    ``fillna(0)`` sobre un contaminante seria un error: afirmaria aire limpio en
+    las horas en que el sensor callo, y el modelo aprenderia esos ceros como
+    reales.
     """
-    ruta = descargar_particion(particion)
-    if ruta.suffix == ".parquet":
-        return pd.read_parquet(ruta)
-    return pd.read_csv(ruta)
+    out = df.copy()
+    out = out[out[fc.TARGET].notna()].copy()
+    for col in fc.CRUDAS_NUMERICAS:
+        if col in out.columns:
+            out[f"{col}_era_nulo"] = out[col].isna().astype("int8")
+            out[col] = out[col].astype("float64").fillna(out[col].median())
+    for col in fc.CRUDAS_CATEGORICAS:
+        if col in out.columns:
+            out[col] = out[col].astype("string").fillna("desconocido").astype(str)
+    return out.reset_index(drop=True)
 
 
 def preparar_particion(
@@ -157,7 +98,7 @@ def preparar_particion(
     filas: int | None = FILAS_POR_PARTICION,
     validar: bool = True,
 ) -> pd.DataFrame:
-    """Descarga, valida, limpia, muestrea y deriva features de una particion.
+    """Lee, valida, limpia, muestrea y deriva features de una particion.
 
     El orden importa y es deliberado:
 
@@ -171,8 +112,7 @@ def preparar_particion(
     Args:
         particion: particion a preparar.
         filas: tamano de la muestra. ``None`` usa la particion completa.
-        validar: desactivarlo solo tiene sentido para demostrar en clase que
-            pasa sin contrato.
+        validar: desactivarlo solo tiene sentido para demostrar en clase.
     """
     df = leer_particion(particion)
     if validar:
@@ -184,30 +124,6 @@ def preparar_particion(
     if validar:
         df = dc.validar_procesados(df)
     return df
-
-
-def limpiar(df: pd.DataFrame) -> pd.DataFrame:
-    """Aplica la estrategia de imputacion y los filtros de negocio.
-
-    TODO(estudiante) 13: `fillna(0)` NO es una estrategia por defecto; es una
-    decision con consecuencias (sesga la media, inventa ceros que el modelo
-    aprende como reales). Decide por columna, documenta el por que en
-    docs/dataset-card.md, y si imputas, considera agregar una columna
-    indicadora `<col>_era_nulo` para que el modelo pueda usar la ausencia como
-    senal en lugar de confundirla con un cero real.
-
-    Aqui hay una imputacion deliberadamente simple para que el template corra;
-    no la copies sin pensarla.
-    """
-    out = df.copy()
-    for col in fc.CRUDAS_NUMERICAS:
-        if col in out.columns:
-            out[f"{col}_era_nulo"] = out[col].isna().astype("int8")
-            out[col] = out[col].astype("float64").fillna(out[col].median())
-    for col in fc.CRUDAS_CATEGORICAS:
-        if col in out.columns:
-            out[col] = out[col].astype("string").fillna("desconocido").astype(str)
-    return out.reset_index(drop=True)
 
 
 def preparar_particiones(
@@ -243,13 +159,8 @@ def split_temporal(
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Split por posicion sobre datos ya ordenados en el tiempo.
 
-    ``train_test_split(shuffle=True)`` sobre datos con eje temporal es un bug,
-    no una simplificacion: mezcla el futuro dentro del entrenamiento y produce
-    una metrica optimista que no se sostiene en produccion. El sintoma clasico
-    es "en validacion daba 0.95 y en produccion da 0.60".
-
-    Raises:
-        ValueError: si el dataframe no esta ordenado por el eje temporal.
+    ``train_test_split(shuffle=True)`` sobre datos con eje temporal es un bug:
+    mezcla el futuro dentro del entrenamiento y produce una metrica optimista.
     """
     if not df[fc.COL_TIEMPO].is_monotonic_increasing:
         raise ValueError(
