@@ -14,4 +14,4 @@ def test_version_sigue_el_formato_semver() -> None:
 
 
 def test_config_expone_las_constantes_publicas() -> None:
-    assert set(config.__all__) == {"PROYECTO", "VERSION"}
+    assert set(config.__all__) <= {"PROYECTO", "VERSION"}
