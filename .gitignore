@@ -1,0 +1,166 @@
+# =============================================================================
+# .gitignore — Curso MLOps
+# =============================================================================
+# Regla de oro: ignoramos ARTEFACTOS (lo que se puede regenerar), nunca
+# CONFIGURACION (lo que define como se regenera).
+#
+# El .gitignore anterior ignoraba globalmente *.json, *.yaml, *.yml, *.txt,
+# *.html, Dockerfile y docker-compose.yml. Eso excluia silenciosamente el
+# metadata.json de los modelos y los DAG de Mage, y rompia dos modulos del
+# curso. Si necesitas ignorar algo, hazlo con la ruta mas especifica posible.
+# =============================================================================
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+eggs/
+.eggs/
+sdist/
+wheels/
+*.egg-info/
+*.egg
+MANIFEST
+
+# --- Entornos virtuales ---
+.venv/
+venv/
+ENV/
+env/
+.python-version.local
+
+# --- Testing y cobertura ---
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+.hypothesis/
+.tox/
+
+# --- Jupyter ---
+.ipynb_checkpoints/
+*/.ipynb_checkpoints/*
+
+# --- Secretos (NUNCA commitear) ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+credentials
+.aws/
+.secrets/
+
+# --- Datos (se descargan con `make data`, se verifican por hash) ---
+data/raw/
+data/processed/
+data/interim/
+data/external/
+*.parquet
+*.csv
+*.feather
+!tests/fixtures/**/*.csv
+!tests/fixtures/**/*.parquet
+!proyecto/starter-template/tests/fixtures/**
+
+# --- Modelos y artefactos (se obtienen del registry: models:/<name>@champion)
+models/
+# ...pero `src/taxi/models/` es un PAQUETE de codigo, no una carpeta de
+# artefactos. Sin esta negacion la regla anterior lo excluye entero: `git add`
+# no muestra error, `git status` sale limpio, todo funciona en la maquina del
+# autor y el repositorio queda sin el modulo de entrenamiento. Es el mismo bug
+# que hacia invisible a `data/raw/metadata.json` bajo la regla global `*.json`.
+# Lo vigila tests/unit/test_config_y_convenciones.py.
+!src/taxi/models/
+# El starter template del proyecto final tiene el mismo paquete `models/` dentro
+# de `src/<paquete>/`. Su propio .gitignore ya lo desexcluye, pero esa negacion
+# solo funciona mientras el archivo anidado exista: si alguien lo borra por
+# "redundante", el modulo de entrenamiento del template desaparece del repositorio
+# sin un solo error. Se declara tambien aqui, acotado al starter-template.
+!proyecto/starter-template/src/*/models/
+artifacts/
+*.pkl
+*.joblib
+*.ubj
+*.bin
+!*.b
+mlruns/
+mlartifacts/
+# Backend SQLite de las trazas de la sesion 8 (LLMOPS_TRACING=local)
+mlruns-llmops.db
+reports/llmops/
+mlflow.db
+*.db-journal
+outputs/
+reports/*.html
+# Resultado del check de drift (S07). Es un artefacto de corrida, como el HTML:
+# se regenera con `python -m taxi.monitoring.check_drift` y lo consume el CI del
+# mismo job que lo produjo. Versionarlo generaria un diff en cada ejecucion.
+reports/*.json
+!reports/.gitkeep
+
+# --- Prefect ---
+.prefect/
+prefect.db
+
+# --- Evidently ---
+evidently_workspace/
+drift_report*.html
+
+# --- IDE / OS ---
+# `.vscode/*` y no `.vscode/`: una regla que excluye el DIRECTORIO no admite
+# negaciones de archivos dentro de el (git no entra a un directorio excluido).
+# Es el mismo bug que tenia `models/` con src/taxi/models/.
+.vscode/*
+# ...pero settings.json y extensions.json SI van al repositorio. Fijan el
+# interprete (.venv del proyecto, no el Python del sistema ni conda base),
+# activan ruff como formatter y desaconsejan Black. Sin esto cada estudiante
+# tiene que configurarlo a mano y la pregunta "en que ambiente ejecuto esto?"
+# cuesta 15 minutos de la primera clase, multiplicados por el numero de
+# estudiantes.
+!.vscode/settings.json
+!.vscode/extensions.json
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- Agentes de codigo ---
+.claude/
+
+# --- Terraform (si se agrega IaC) ---
+.terraform/
+*.tfstate
+*.tfstate.*
+
+# =============================================================================
+# EXCEPCIONES EXPLICITAS
+# Estos archivos SI van al repo aunque coincidan con patrones de arriba.
+# =============================================================================
+!**/metadata.json          # procedencia y checksums de datasets y modelos
+!**/dataset-metadata.json
+!.pre-commit-config.yaml
+!.github/**/*.yml
+!.github/**/*.yaml
+!docker-compose.yml
+!Dockerfile
+!**/Dockerfile
+
+# --- Configuracion local de herramientas de IA ---
+# .mcp.json guarda tokens en claro (GITHUB_PERSONAL_ACCESS_TOKEN). Es config de
+# la maquina de cada quien, no del curso, y nunca debe llegar al repositorio.
+.mcp.json
+.claude/settings.local.json
+
+# --- Transferencia de ramas (temporales) ---
+*.bundle
+limpiar-y-finalizar.sh
