@@ -107,6 +107,7 @@ def _loggear_corrida(
         "artifact_path": "model",
         "input_example": ejemplo_entrada,
         "signature": firma,
+        "serialization_format": "cloudpickle",
     }
     if registrar:
         kwargs_modelo["registered_model_name"] = MODELO_REGISTRADO
