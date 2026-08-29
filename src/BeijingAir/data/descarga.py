@@ -80,6 +80,8 @@ def descargar(*, forzar: bool = False) -> Path:
 
 def extraer(zip_path: Path) -> Path:
     """Descomprime. Beijing trae otro ZIP adentro: hay que hacerlo dos veces."""
+    if list(DIR_EXTRAIDO.rglob("PRSA_Data_*.csv")):
+        return DIR_EXTRAIDO
     DIR_EXTRAIDO.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(zip_path) as z:
         z.extractall(DIR_EXTRAIDO)

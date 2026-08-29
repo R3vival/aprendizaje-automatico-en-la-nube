@@ -13,7 +13,7 @@ SHELL := /bin/bash
 UV := uv
 PY := $(UV) run
 
-.PHONY: help setup test test-fast lint format typecheck check validate-data clean
+.PHONY: help setup data test test-fast lint format typecheck check validate-data mlflow train clean
 
 # =============================================================================
 help: ## Muestra los targets disponibles
@@ -34,9 +34,12 @@ setup: ## Instala dependencias y los hooks de pre-commit
 	  && (echo "Limpiando core.hooksPath heredado..."; git config --unset-all core.hooksPath) \
 	  || true
 	$(PY) pre-commit install --install-hooks
+	$(MAKE) data
 	@echo ""
 	@echo "Listo."
 
+data: ## Descarga y extrae el dataset Beijing
+	$(PY) python -m BeijingAir.data.descarga
 # =============================================================================
 # Calidad — el CI corre exactamente esto
 # =============================================================================
@@ -59,6 +62,13 @@ check: lint typecheck test-fast ## Todo lo que el CI verifica, en local
 
 validate-data: ## Descarga (si falta) y valida las particiones reales
 	$(PY) python -m BeijingAir.data.validate
+
+mlflow: ## Inicia el servidor local de tracking en http://127.0.0.1:5001
+	$(PY) mlflow server --backend-store-uri sqlite:///mlflow.db \
+	  --default-artifact-root ./mlartifacts --host 127.0.0.1 --port 5001
+
+train: ## Entrena baseline y bosque, y registra ambos en MLflow
+	$(PY) python -m BeijingAir.models.train
 
 # =============================================================================
 # Limpieza
