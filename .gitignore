@@ -86,6 +86,9 @@ models/
 # La regla amplia ``models/`` tampoco debe ocultar las pruebas del paquete.
 !tests/models/
 !tests/models/**
+
+# Los bytecode temporales no se versionan, tampoco dentro de tests/models.
+tests/models/__pycache__/
 # El starter template del proyecto final tiene el mismo paquete `models/` dentro
 # de `src/<paquete>/`. Su propio .gitignore ya lo desexcluye, pero esa negacion
 # solo funciona mientras el archivo anidado exista: si alguien lo borra por
