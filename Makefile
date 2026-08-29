@@ -13,7 +13,7 @@ SHELL := /bin/bash
 UV := uv
 PY := $(UV) run
 
-.PHONY: help setup test test-fast lint format typecheck check validate-data mlflow train clean
+.PHONY: help setup data test test-fast lint format typecheck check validate-data mlflow train clean
 
 # =============================================================================
 help: ## Muestra los targets disponibles
