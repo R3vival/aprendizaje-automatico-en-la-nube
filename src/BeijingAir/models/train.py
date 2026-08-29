@@ -22,8 +22,8 @@ from BeijingAir.config import (
     MLFLOW_EXPERIMENT,
     MLFLOW_TRACKING_URI,
     MODELO_REGISTRADO,
-    PARTICIONES_TRAIN,
     PARTICION_VALID,
+    PARTICIONES_TRAIN,
     PROJECT_ROOT,
     RAW_DIR,
     SEMILLA,
@@ -60,7 +60,7 @@ def _hash_dataset() -> str:
     if not ruta_metadata.exists():
         return "no-disponible"
     metadata = json.loads(ruta_metadata.read_text(encoding="utf-8"))
-    primer_archivo = next(iter(metadata.values()), {})
+    primer_archivo: dict[str, object] = next(iter(metadata.values()), {})
     return str(primer_archivo.get("sha256", "no-disponible"))
 
 
