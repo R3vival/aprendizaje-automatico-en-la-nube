@@ -128,9 +128,13 @@ Sesgos y riesgos conocidos:
 3. **Ausencia no aleatoria de sensores.** Los contaminantes concentran más
    nulos que la meteorología; por tanto, imputar sin registrar la ausencia
    ocultaría posibles periodos de fallo de instrumentos.
-4. **Saturación de instrumentos.** `PM2.5` y `PM10` contienen el valor máximo
-   999. Esas horas pierden resolución en el extremo más contaminado y deben
-   interpretarse como mediciones censuradas, no como una concentración exacta.
+4. **Cola pesada, no saturación.** El máximo observado en `PM2.5` y `PM10` es
+   999, pero solo 1 fila alcanza ese valor en `PM2.5` y 3 en `PM10` sobre
+   420.768: son valores extremos aislados, no un tope del instrumento que
+   censure sistemáticamente las horas más contaminadas. El riesgo real es
+   distinto: la distribución tiene cola pesada (p99 de `PM2.5` en ~342 µg/m³ en
+   train, máximo ~844), así que los episodios severos están poco representados
+   y el error del modelo se concentra ahí. Se verifica en el EDA, sección 12.
 
 ## Limitaciones y usos no previstos
 
