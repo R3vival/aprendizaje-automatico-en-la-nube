@@ -87,9 +87,7 @@ def lectura_estacion_hora_duplicada(crudo_valido: pd.DataFrame) -> pd.DataFrame:
         "lectura_estacion_hora_duplicada",
     ],
 )
-def test_contrato_rechaza_datos_rotos(
-    request: pytest.FixtureRequest, nombre_fixture: str
-) -> None:
+def test_contrato_rechaza_datos_rotos(request: pytest.FixtureRequest, nombre_fixture: str) -> None:
     """Los tres incidentes silenciosos se rechazan antes del entrenamiento."""
     dataframe_roto = request.getfixturevalue(nombre_fixture)
 
