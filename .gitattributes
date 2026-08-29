@@ -1,0 +1,4 @@
+# Normaliza lineas de los notebooks a LF, independiente de core.autocrlf.
+# Evita que el hook mixed-line-ending falle por la conversion CRLF/LF en
+# Windows al hacer push de un .ipynb.
+*.ipynb text eol=lf
