@@ -65,6 +65,7 @@ make typecheck    # verifica tipos con mypy
 make test         # corre todos los tests
 make test-fast    # corre solo los tests sin red ni servicios
 make check        # lint + tipos + tests, en local
+make validate-data # descarga y valida las particiones reales contra el contrato
 make clean        # borra caches y artefactos temporales
 ```
 

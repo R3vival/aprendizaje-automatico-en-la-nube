@@ -150,6 +150,16 @@ class RegistrosCrudos(pa.DataFrameModel):
         ambas = df["TEMP"].notna() & df["DEWP"].notna()
         return ~ambas | df["TEMP"].ge(df["DEWP"])
 
+    @pa.dataframe_check(name="una_lectura_por_estacion_y_hora")
+    def una_lectura_por_estacion_y_hora(cls, df: pd.DataFrame) -> bool:
+        """Cada par estacion-timestamp identifica una unica lectura.
+
+        Dos filas para la misma estacion y hora suelen indicar que se repitio
+        una descarga o que un merge de archivos duplico parte del lote. Sin
+        esta regla, el entrenamiento le daria mas peso a esas horas sin aviso.
+        """
+        return not df.duplicated(subset=["station", "datetime"]).any()
+
     @pa.dataframe_check(name="contaminantes_medianamente_cubiertos")
     def contaminantes_medianamente_cubiertos(cls, df: pd.DataFrame) -> bool:
         """Menos del 30 % de nulos en cada contaminante.

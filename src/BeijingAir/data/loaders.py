@@ -58,7 +58,9 @@ def asegurar_crudo() -> pd.DataFrame:
 def leer_particion(particion: Particion) -> pd.DataFrame:
     """Lee una particion (rango temporal) del crudo cacheado."""
     crudo = asegurar_crudo()
-    mascara = (crudo[fc.COL_TIEMPO] >= particion.desde) & (crudo[fc.COL_TIEMPO] <= particion.hasta)
+    inicio = pd.Timestamp(particion.desde)
+    fin_exclusivo = pd.Timestamp(particion.hasta) + pd.Timedelta(days=1)
+    mascara = (crudo[fc.COL_TIEMPO] >= inicio) & (crudo[fc.COL_TIEMPO] < fin_exclusivo)
     return crudo.loc[mascara].reset_index(drop=True)
 
 

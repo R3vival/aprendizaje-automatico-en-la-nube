@@ -13,7 +13,7 @@ SHELL := /bin/bash
 UV := uv
 PY := $(UV) run
 
-.PHONY: help setup test test-fast lint format typecheck check clean
+.PHONY: help setup test test-fast lint format typecheck check validate-data clean
 
 # =============================================================================
 help: ## Muestra los targets disponibles
@@ -56,6 +56,9 @@ typecheck: ## Verifica tipos con mypy
 	$(PY) mypy
 
 check: lint typecheck test-fast ## Todo lo que el CI verifica, en local
+
+validate-data: ## Descarga (si falta) y valida las particiones reales
+	$(PY) python -m BeijingAir.data.validate
 
 # =============================================================================
 # Limpieza

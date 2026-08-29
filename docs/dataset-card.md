@@ -18,8 +18,8 @@
 | Eje temporal explícito | Sí | `year`/`month`/`day`/`hour` horario, de 2013-03-01 a 2017-02-28. Se compone en la columna `datetime` en `data/descarga.py` |
 | ≥2 particiones separables | Sí | Cuatro rangos declarados en `config.py`: train, valid, test y produccion simulada |
 | ≤500 MB, descargable sin autenticación | Sí | 8,2 MB comprimido, HTTP 200 sin credenciales |
-| ≥3 categóricas y ≥3 numéricas con nulos reales | **Parcial** | Numéricas: 11 con nulos reales. Categóricas nativas: solo 2 (`station`, `wd`). Se deriva una tercera (TODO: cuál) y se declara aquí |
-| Métrica de negocio articulable | Sí | TODO: escríbela tú, ver abajo |
+| ≥3 categóricas y ≥3 numéricas con nulos reales | Sí | Numéricas: 11 con nulos reales. Categóricas nativas: `station` y `wd`; el pipeline deriva `temporada` a partir del mes |
+| Métrica de negocio articulable | Sí | MAE de `PM2.5` en µg/m³, reportado además por estación. El modelo sirve para estimar la lectura cuando el sensor de `PM2.5` no está disponible; un error se interpreta directamente en la unidad de calidad del aire |
 | Licencia que permite uso educativo | Sí | CC BY 4.0, requiere atribución |
 
 > Nota sobre el metadata de UCI: la ficha oficial declara `has_missing_values: no`
@@ -78,15 +78,24 @@ Se nota el patrón: los contaminantes (1,5-4,9 %) fallan mucho más que la
 meteorología (0,1 %). Son instrumentos distintos, con mantenimiento y
 calibraciones distintas.
 
-TODO: escribe aquí la estrategia que eligieron y por qué.
+**Estrategia aplicada en `data/loaders.py`:** se descartan las filas con
+`PM2.5` nulo porque inventar el target enseñaría al modelo una medición que no
+existió. Las variables numéricas se imputan con la mediana de su partición y
+conservan un indicador `<col>_era_nulo`; así el modelo puede aprender que el
+sensor falló. La dirección del viento `wd` se completa como `desconocido`.
+Esta decisión se ejecuta después de validar el crudo y antes de construir las
+features.
 
+## Calibración de controles del contrato
 
-Conteos reales medidos sobre las 420.768 filas:
-
-<PEGA AQUÍ LA SALIDA DEL COMANDO>
-
-TODO: para cada columna, di si el nulo es **estructural** (el campo no aplica a
-ese registro) o por **fallo de captura**, y qué estrategia aplicas.
+| Regla de distribución | Valor medido | Umbral del contrato | Margen y motivo |
+|---|---:|---:|---|
+| Volumen del dataset completo | 420.768 filas | ≥100 filas por lote | El umbral no intenta validar el tamaño histórico: detecta una ingesta truncada |
+| Cobertura de CO (la menor) | 95,1 % | ≥70 % | Margen de 25,1 puntos porcentuales para tolerar ruido real sin aceptar un sensor caído |
+| Cobertura de los demás contaminantes | 96,8–98,5 % | ≥70 % | Misma regla, con margen amplio y uniforme para el proveedor |
+| Variación de `PM2.5` | Más de un valor observado | >1 valor distinto | Un target constante no permite entrenar una regresión útil |
+| Regla física `DEWP ≤ TEMP` | 0 violaciones con ambas mediciones presentes | 0 violaciones | Un punto de rocío mayor que la temperatura indica un problema de medición o parseo |
+| Clave `station` + `datetime` | 420.768 pares distintos | 0 duplicados | Dos lecturas para la misma estación y hora suelen revelar una descarga repetida o un merge defectuoso |
 
 ## Particiones
 
@@ -97,10 +106,54 @@ ese registro) o por **fallo de captura**, y qué estrategia aplicas.
 | test | 2016-01-01 a 2016-06-30 | holdout fijo, juez del gate |
 | produccion | 2016-07-01 a 2017-02-28 | producción simulada para monitoreo |
 
+La validación reproducible del lote real se ejecuta con `make validate-data`.
+El comando descarga el ZIP solo si no está disponible, crea el cache local y
+valida cada partición completa contra `RegistrosCrudos`.
+
 ## Población representada y sesgos conocidos
 
-TODO
+La población representada son **lecturas horarias de calidad del aire y
+meteorología**, no personas: 12 estaciones de monitoreo de Beijing entre marzo
+de 2013 y febrero de 2017. Cada fila describe una estación y una hora; no mide la
+exposición personal de quienes viven o trabajan cerca de ella.
+
+Sesgos y riesgos conocidos:
+
+1. **Cobertura espacial limitada.** Doce estaciones no representan todos los
+   microambientes de Beijing ni la exposición dentro de viviendas, escuelas o
+   medios de transporte. Un modelo puede rendir distinto lejos de una estación.
+2. **Cobertura temporal histórica.** El periodo termina en 2017. Cambios
+   posteriores en movilidad, industria, regulación o clima no están en los
+   datos y no se deben interpretar como comportamiento actual.
+3. **Ausencia no aleatoria de sensores.** Los contaminantes concentran más
+   nulos que la meteorología; por tanto, imputar sin registrar la ausencia
+   ocultaría posibles periodos de fallo de instrumentos.
+4. **Saturación de instrumentos.** `PM2.5` y `PM10` contienen el valor máximo
+   999. Esas horas pierden resolución en el extremo más contaminado y deben
+   interpretarse como mediciones censuradas, no como una concentración exacta.
 
 ## Limitaciones y usos no previstos
 
-TODO
+- Este dataset permite **estimación horaria al cierre de la hora** (nowcasting
+  de `PM2.5` con las demás mediciones disponibles), no un pronóstico de varios
+  días. Para pronosticar el futuro se necesitarían variables disponibles antes
+  de la hora objetivo, como pronósticos meteorológicos y rezagos.
+- No permite atribuir causalidad entre contaminantes y meteorología: las
+  correlaciones del EDA son descriptivas y pueden compartir fuentes o
+  estacionalidad.
+- No es adecuado para decisiones clínicas, regulatorias individuales ni para
+  inferir exposición de una persona concreta.
+
+## Disponibilidad temporal y prevención de leakage
+
+| Feature o grupo | Disponible para estimar la hora `t` | Decisión |
+|---|---|---|
+| `station` | Antes de `t` | Identifica el sensor; se usa como categórica |
+| Calendario (`hora`, `dia_semana`, `mes`, `temporada`) | Antes de `t` | Se deriva solo del timestamp y no usa el target |
+| Meteorología y otros contaminantes | Al cierre de `t` | Se usan para estimar `PM2.5` si sus sensores reportaron esa hora; son un caso de nowcasting |
+| `PM2.5` | Al cierre de `t` | Es el target y nunca entra en `FEATURES` |
+| Mediciones posteriores a `t` | No | Se excluyen: introducirían información del futuro |
+
+Las particiones se cortan por fecha y permanecen fijas. La validación y el
+test son posteriores al train, por lo que el holdout no participa en decisiones
+de selección ni de imputación del entrenamiento.

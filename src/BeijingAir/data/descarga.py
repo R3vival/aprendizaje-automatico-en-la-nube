@@ -101,7 +101,9 @@ def cargar_crudo() -> pd.DataFrame:
 
 def filtrar(df: pd.DataFrame, particion: Particion) -> pd.DataFrame:
     """Recorta el dataframe al rango de fechas de una particion."""
-    mascara = (df[COL_TIEMPO] >= particion.desde) & (df[COL_TIEMPO] <= particion.hasta)
+    inicio = pd.Timestamp(particion.desde)
+    fin_exclusivo = pd.Timestamp(particion.hasta) + pd.Timedelta(days=1)
+    mascara = (df[COL_TIEMPO] >= inicio) & (df[COL_TIEMPO] < fin_exclusivo)
     return df.loc[mascara].reset_index(drop=True)
 
 
