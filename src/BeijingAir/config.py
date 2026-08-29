@@ -21,6 +21,10 @@ __all__ = [
     "FUENTE",
     "LICENCIA",
     "LICENCIA_URL",
+    "MLFLOW_EXPERIMENT",
+    "MLFLOW_PORT",
+    "MLFLOW_TRACKING_URI",
+    "MODELO_REGISTRADO",
     "PARTICIONES_PRODUCCION",
     "PARTICIONES_TRAIN",
     "PARTICION_TEST",
@@ -113,6 +117,18 @@ TODAS_LAS_PARTICIONES: Final[tuple[Particion, ...]] = (
 FILAS_POR_PARTICION: Final[int] = 50_000
 #: Semilla global. Se pasa explicitamente a cada componente.
 SEMILLA: Final[int] = 42
+
+# =============================================================================
+# Tracking de experimentos
+# =============================================================================
+#: El servidor local se ejecuta con ``make mlflow``. Se puede reemplazar por
+#: una URI remota sin cambiar el codigo, mediante MLFLOW_TRACKING_URI.
+MLFLOW_PORT: Final[int] = int(os.getenv("MLFLOW_PORT", "5001"))
+MLFLOW_TRACKING_URI: Final[str] = os.getenv(
+    "MLFLOW_TRACKING_URI", f"http://127.0.0.1:{MLFLOW_PORT}"
+)
+MLFLOW_EXPERIMENT: Final[str] = "beijing-air"
+MODELO_REGISTRADO: Final[str] = "beijing-air-pm25"
 
 
 def asegurar_directorios() -> None:
