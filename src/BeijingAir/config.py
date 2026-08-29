@@ -16,6 +16,8 @@ from typing import Final
 __all__ = [
     "ARCHIVO_ZIP",
     "COL_TIEMPO",
+    "ALFA_DRIFT",
+    "UMBRAL_DRIFT_COLUMNAS"
     "DATA_DIR",
     "FILAS_POR_PARTICION",
     "FUENTE",
@@ -135,3 +137,15 @@ def asegurar_directorios() -> None:
     """Crea los directorios de trabajo si no existen."""
     for directorio in (RAW_DIR, PROCESSED_DIR, REPORTS_DIR):
         directorio.mkdir(parents=True, exist_ok=True)
+
+# =============================================================================
+# Monitoreo de drift
+# =============================================================================
+#: Fraccion de columnas con drift que dispara la alerta.
+#: TODO: justificar este numero en docs/politica-de-reentrenamiento.md.
+UMBRAL_DRIFT_COLUMNAS: Final[float] = 0.30
+
+#: Nivel de significancia de los tests por columna. Ojo: con 420.768 filas TODO
+#: sale significativo, asi que el p-valor NO decide solo; el codigo exige
+#: ademas un tamano de efecto minimo.
+ALFA_DRIFT: Final[float] = 0.05
