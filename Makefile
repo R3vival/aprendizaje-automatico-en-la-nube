@@ -34,9 +34,12 @@ setup: ## Instala dependencias y los hooks de pre-commit
 	  && (echo "Limpiando core.hooksPath heredado..."; git config --unset-all core.hooksPath) \
 	  || true
 	$(PY) pre-commit install --install-hooks
+	$(MAKE) data
 	@echo ""
 	@echo "Listo."
 
+data: ## Descarga y extrae el dataset Beijing
+	$(PY) python -m BeijingAir.data.descarga
 # =============================================================================
 # Calidad — el CI corre exactamente esto
 # =============================================================================
