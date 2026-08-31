@@ -84,3 +84,36 @@ para estructura, convenciones y configuración.
 ## Contribuir
 
 Pendiente de definir las convenciones de contribución.
+
+## Monitoreo de drift
+
+Compara la partición de referencia (`train`, 2013-03 a 2015-06) contra la
+producción simulada (2016-07 a 2017-02) y genera un reporte navegable.
+
+```bash
+make drift        # o: uv run python -m BeijingAir.monitoring.check_drift
+```
+
+Produce dos cosas:
+
+- Una tabla por columna en la terminal: test, p-valor, tamaño del efecto y veredicto.
+- `reports/drift-report.html`, el reporte navegable de Evidently.
+
+Y termina con un **exit code** utilizable en CI: `0` sin drift, `1` con drift,
+`2` si falla la infraestructura.
+
+### Cómo se decide
+
+No basta con que el cambio sea estadísticamente significativo: con 245.376 filas
+de referencia, **todas** las columnas dan p < 0.05, incluso las que cambian un
+0,7 %. Por eso se exigen dos condiciones: significancia **y** un tamaño de efecto
+mínimo (KS ≥ 0.10). El umbral global es el 30 % de columnas con drift.
+
+`mes` y `temporada` se excluyen del check porque driftean por construcción: dos
+ventanas temporales distintas siempre tienen mezcla distinta de meses. `hora`,
+`dia_semana` y `station` sí se conservan como control — que den efecto ~0
+verifica que la partición está bien armada.
+
+Los umbrales y su justificación están en
+[`docs/politica-de-reentrenamiento.md`](docs/politica-de-reentrenamiento.md),
+junto con el análisis que separa la estacionalidad del cambio estructural real.

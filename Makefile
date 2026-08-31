@@ -13,7 +13,7 @@ SHELL := /bin/bash
 UV := uv
 PY := $(UV) run
 
-.PHONY: help setup data test test-fast lint format typecheck check validate-data mlflow train clean
+.PHONY: help setup data test test-fast lint format typecheck check validate-data mlflow train drift clean
 
 # =============================================================================
 help: ## Muestra los targets disponibles
@@ -69,6 +69,12 @@ mlflow: ## Inicia el servidor local de tracking en http://127.0.0.1:5001
 
 train: ## Entrena baseline y bosque, y registra ambos en MLflow
 	$(PY) python -m BeijingAir.models.train
+
+# =============================================================================
+# Monitoreo
+# =============================================================================
+drift: ## Reporte de drift: referencia vs produccion simulada
+	$(PY) python -m BeijingAir.monitoring.check_drift
 
 # =============================================================================
 # Limpieza
