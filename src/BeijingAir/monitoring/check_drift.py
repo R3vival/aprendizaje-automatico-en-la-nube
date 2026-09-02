@@ -260,16 +260,10 @@ def main() -> int:
     numericas = [c for c in fc.FEATURES_NUMERICAS if c not in EXCLUIDAS]
     categoricas = [c for c in fc.FEATURES_CATEGORICAS if c not in EXCLUIDAS]
 
-    referencia = pd.concat(
-        [filtrar(df, p) for p in PARTICIONES_TRAIN], ignore_index=True
-    )
-    produccion = pd.concat(
-        [filtrar(df, p) for p in PARTICIONES_PRODUCCION], ignore_index=True
-    )
+    referencia = pd.concat([filtrar(df, p) for p in PARTICIONES_TRAIN], ignore_index=True)
+    produccion = pd.concat([filtrar(df, p) for p in PARTICIONES_PRODUCCION], ignore_index=True)
 
-    logger.info(
-        "referencia: %d filas | produccion: %d filas", len(referencia), len(produccion)
-    )
+    logger.info("referencia: %d filas | produccion: %d filas", len(referencia), len(produccion))
     if referencia.empty or produccion.empty:
         logger.error("Alguna particion quedo vacia. Revisa los rangos en config.py")
         return ERROR_INFRA
