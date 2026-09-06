@@ -13,7 +13,7 @@ SHELL := /bin/bash
 UV := uv
 PY := $(UV) run
 
-.PHONY: help setup data test test-fast lint format typecheck check validate-data mlflow prefect-server train flow serve-flow clean
+.PHONY: help setup data test test-fast lint format typecheck check validate-data mlflow prefect-server train flow serve-flow serve clean
 
 # =============================================================================
 help: ## Muestra los targets disponibles
@@ -78,6 +78,9 @@ flow: ## Ejecuta una corrida orquestada de validacion y entrenamiento
 
 serve-flow: ## Deja servido el schedule mensual de entrenamiento en Prefect
 	$(PY) python -m BeijingAir.flows.training --serve
+
+serve: ## Inicia la API local de prediccion en http://127.0.0.1:8000
+	$(PY) uvicorn BeijingAir.api.main:app --host 127.0.0.1 --port 8000
 
 # =============================================================================
 # Limpieza

@@ -72,6 +72,7 @@ make train        # entrena baseline y bosque, y registra las corridas en MLflow
 make prefect-server # inicia Prefect en http://127.0.0.1:4200
 make flow          # valida, entrena y registra un candidato con Prefect
 make serve-flow    # deja servido el schedule mensual de Prefect
+make serve         # inicia la API de prediccion en http://127.0.0.1:8000
 make clean        # borra caches y artefactos temporales
 ```
 
@@ -85,6 +86,31 @@ Para la sesión de orquestación usa tres terminales: `make mlflow`,
 los datos antes de entrenar y registra el bosque como `candidate` en MLflow. El
 schedule mensual de `make serve-flow` despierta el flow, pero este solo
 reentrena si cambió el hash del dataset; no promueve modelos automáticamente.
+
+## Deployment: API y Docker
+
+La API se ejecuta con `uv run uvicorn BeijingAir.api.main:app --host 127.0.0.1 --port 8000`
+(o `make serve` donde `make` esté disponible). Abre
+`http://127.0.0.1:8000/docs` para probarla. Su contrato recibe una lectura
+cruda: la API deriva las variables de calendario mediante el mismo código que
+el entrenamiento y no acepta columnas desconocidas.
+
+El servicio busca exclusivamente `models:/beijing-air-pm25@champion` en MLflow.
+Como la promoción aún corresponde a la siguiente etapa, es normal que al inicio
+`GET /health` responda `degradado` y `POST /predict` responda 503: es una
+protección para no entregar el alias `candidate` a usuarios. Para usar otro
+Registry o URI se configura `MODELO_URI` antes de arrancar.
+
+```bash
+# Requiere Docker Desktop encendido. No incluye datos ni modelos en la imagen.
+docker build -t beijing-air-api .
+docker run --rm -p 8000:8000 \
+  -e MLFLOW_TRACKING_URI=http://host.docker.internal:5001 \
+  beijing-air-api
+```
+
+Consulta los detalles y la decisión en
+[`docs/adr/0003-serving-api-y-registry.md`](docs/adr/0003-serving-api-y-registry.md).
 
 ## Créditos
 

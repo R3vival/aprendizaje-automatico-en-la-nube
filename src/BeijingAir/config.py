@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Final
 
 __all__ = [
+    "API_PORT",
     "ARCHIVO_ZIP",
     "COL_TIEMPO",
     "DATA_DIR",
@@ -25,7 +26,9 @@ __all__ = [
     "MLFLOW_EXPERIMENT",
     "MLFLOW_PORT",
     "MLFLOW_TRACKING_URI",
+    "MODELO_ALIAS",
     "MODELO_REGISTRADO",
+    "MODELO_URI",
     "PARTICIONES_PRODUCCION",
     "PARTICIONES_TRAIN",
     "PARTICION_TEST",
@@ -134,6 +137,16 @@ MLFLOW_TRACKING_URI: Final[str] = os.getenv(
 )
 MLFLOW_EXPERIMENT: Final[str] = "beijing-air"
 MODELO_REGISTRADO: Final[str] = "beijing-air-pm25"
+
+# =============================================================================
+# Serving
+# =============================================================================
+#: La API consulta el Registry; nunca carga un .pkl copiado en la imagen.
+#: ``champion`` se asignara mediante el gate de promocion de CI/CD. Mientras no
+#: exista, la API informa estado degradado sin caerse ni servir ``candidate``.
+MODELO_ALIAS: Final[str] = os.getenv("MODELO_ALIAS", "champion")
+MODELO_URI: Final[str] = os.getenv("MODELO_URI", f"models:/{MODELO_REGISTRADO}@{MODELO_ALIAS}")
+API_PORT: Final[int] = int(os.getenv("API_PORT", "8000"))
 
 # =============================================================================
 # Orquestacion

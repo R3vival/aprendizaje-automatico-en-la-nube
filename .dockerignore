@@ -1,0 +1,27 @@
+# El contexto de build solo necesita codigo y manifiestos de dependencias.
+.git/
+.github/
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Datos, artefactos y estados de ejecucion nunca se hornean en la imagen.
+data/
+models/
+reports/
+mlruns/
+mlartifacts/
+mlflow.db
+prefect.db
+.prefect/
+evidently_workspace/
+
+# Material local o de desarrollo.
+.env
+.env.*
+notebooks/
+tests/
+.vscode/
