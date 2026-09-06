@@ -112,6 +112,25 @@ docker run --rm -p 8000:8000 \
 Consulta los detalles y la decisión en
 [`docs/adr/0003-serving-api-y-registry.md`](docs/adr/0003-serving-api-y-registry.md).
 
+## Promoción controlada del modelo
+
+El flow deja un modelo como `candidate`; nunca toca `champion`. Cada corrida
+actualizada mide además `mae_test` y `r2_test` en la partición temporal que no
+se usa para elegir el modelo. El gate compara dichas métricas con límites
+explícitos y con el champion actual. Para revisar el resultado localmente, sin
+mover ningún alias, inicia MLflow y ejecuta:
+
+```bash
+uv run python -m BeijingAir.models.promote --dry-run
+```
+
+La mutación real se hace solo desde el workflow manual **Promover modelo** de
+GitHub Actions, en el entorno `production`. Antes de usarlo, el administrador
+del repositorio debe crear allí el secreto `MLFLOW_TRACKING_URI` con una URL de
+un MLflow Registry remoto; `http://127.0.0.1:5001` es local y GitHub no puede
+alcanzarlo. Los criterios y la decisión están documentados en
+[`docs/adr/0004-gate-de-promocion.md`](docs/adr/0004-gate-de-promocion.md).
+
 ## Créditos
 
 Basado en el repositorio [`MLOps-Course`](https://github.com/dpalacioj/MLOps-Course)

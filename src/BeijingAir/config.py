@@ -23,10 +23,14 @@ __all__ = [
     "FUENTE",
     "LICENCIA",
     "LICENCIA_URL",
+    "MAX_EMPEORAMIENTO_MAE",
+    "MAX_MAE_TEST",
+    "MIN_R2_TEST",
     "MLFLOW_EXPERIMENT",
     "MLFLOW_PORT",
     "MLFLOW_TRACKING_URI",
     "MODELO_ALIAS",
+    "MODELO_ALIAS_CANDIDATO",
     "MODELO_REGISTRADO",
     "MODELO_URI",
     "PARTICIONES_PRODUCCION",
@@ -145,8 +149,19 @@ MODELO_REGISTRADO: Final[str] = "beijing-air-pm25"
 #: ``champion`` se asignara mediante el gate de promocion de CI/CD. Mientras no
 #: exista, la API informa estado degradado sin caerse ni servir ``candidate``.
 MODELO_ALIAS: Final[str] = os.getenv("MODELO_ALIAS", "champion")
+MODELO_ALIAS_CANDIDATO: Final[str] = os.getenv("MODELO_ALIAS_CANDIDATO", "candidate")
 MODELO_URI: Final[str] = os.getenv("MODELO_URI", f"models:/{MODELO_REGISTRADO}@{MODELO_ALIAS}")
 API_PORT: Final[int] = int(os.getenv("API_PORT", "8000"))
+
+# =============================================================================
+# Gate de promocion
+# =============================================================================
+#: Limites iniciales para el holdout temporal ``test``. Se pueden ajustar por
+#: variables de entorno sin cambiar el codigo; el gate falla cerrado si faltan
+#: las metricas del candidato o si empeora frente a champion.
+MAX_MAE_TEST: Final[float] = float(os.getenv("MAX_MAE_TEST", "45.0"))
+MIN_R2_TEST: Final[float] = float(os.getenv("MIN_R2_TEST", "0.0"))
+MAX_EMPEORAMIENTO_MAE: Final[float] = float(os.getenv("MAX_EMPEORAMIENTO_MAE", "0.05"))
 
 # =============================================================================
 # Orquestacion

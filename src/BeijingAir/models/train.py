@@ -21,7 +21,9 @@ from BeijingAir.config import (
     FILAS_POR_PARTICION,
     MLFLOW_EXPERIMENT,
     MLFLOW_TRACKING_URI,
+    MODELO_ALIAS_CANDIDATO,
     MODELO_REGISTRADO,
+    PARTICION_TEST,
     PARTICION_VALID,
     PARTICIONES_TRAIN,
     PROJECT_ROOT,
@@ -81,6 +83,9 @@ def _loggear_corrida(
     x_valid: pd.DataFrame,
     y_valid: pd.Series,
     estaciones_valid: pd.Series,
+    x_test: pd.DataFrame,
+    y_test: pd.Series,
+    estaciones_test: pd.Series,
     n_estimators: int,
     registrar: bool,
 ) -> ResultadoEvaluacion:
@@ -89,6 +94,8 @@ def _loggear_corrida(
     pipeline.fit(x_train, y_train)
     predicciones = pipeline.predict(x_valid)
     evaluacion = evaluar_regresion(y_valid, predicciones, estaciones_valid)
+    predicciones_test = pipeline.predict(x_test)
+    evaluacion_test = evaluar_regresion(y_test, predicciones_test, estaciones_test)
 
     mlflow.log_params(_parametros_modelo(modelo, n_estimators))
     mlflow.log_metrics(
@@ -97,9 +104,14 @@ def _loggear_corrida(
             "rmse_valid": evaluacion.rmse,
             "r2_valid": evaluacion.r2,
             "peor_mae_estacion_valid": evaluacion.peor_mae_estacion,
+            "mae_test": evaluacion_test.mae,
+            "rmse_test": evaluacion_test.rmse,
+            "r2_test": evaluacion_test.r2,
+            "peor_mae_estacion_test": evaluacion_test.peor_mae_estacion,
         }
     )
     mlflow.log_dict(evaluacion.como_dict(), "evaluacion/metricas_por_estacion.json")
+    mlflow.log_dict(evaluacion_test.como_dict(), "evaluacion/metricas_test_por_estacion.json")
 
     ejemplo_entrada = x_train.head(3)
     firma = infer_signature(ejemplo_entrada, pipeline.predict(ejemplo_entrada))
@@ -114,7 +126,7 @@ def _loggear_corrida(
     version_registrada = getattr(informacion_modelo, "registered_model_version", None)
     if registrar and version_registrada:
         mlflow.MlflowClient().set_registered_model_alias(
-            MODELO_REGISTRADO, "candidate", str(version_registrada)
+            MODELO_REGISTRADO, MODELO_ALIAS_CANDIDATO, str(version_registrada)
         )
     return evaluacion
 
@@ -127,6 +139,7 @@ def entrenar_y_registrar(
     tags_adicionales: Mapping[str, str] | None = None,
     datos_train: pd.DataFrame | None = None,
     datos_valid: pd.DataFrame | None = None,
+    datos_test: pd.DataFrame | None = None,
 ) -> dict[str, ResultadoEvaluacion]:
     """Compara baseline y bosque sobre el split temporal fijo.
 
@@ -134,25 +147,32 @@ def entrenar_y_registrar(
     ``fit``. MLflow recibe un run padre con los datos de procedencia y un run
     anidado para cada candidato.
     """
-    if (datos_train is None) != (datos_valid is None):
-        raise ValueError("datos_train y datos_valid se deben proporcionar juntos.")
+    datasets_preparados = (datos_train, datos_valid, datos_test)
+    if any(dataset is None for dataset in datasets_preparados) and not all(
+        dataset is None for dataset in datasets_preparados
+    ):
+        raise ValueError("datos_train, datos_valid y datos_test se deben proporcionar juntos.")
 
     mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
     mlflow.set_experiment(MLFLOW_EXPERIMENT)
-    if datos_train is None or datos_valid is None:
+    if datos_train is None or datos_valid is None or datos_test is None:
         train = preparar_particiones(PARTICIONES_TRAIN, filas=filas)
         valid = preparar_particion(PARTICION_VALID, filas=filas)
+        test = preparar_particion(PARTICION_TEST, filas=filas)
     else:
         train = datos_train
         valid = datos_valid
+        test = datos_test
     x_train, y_train = separar_features_target(train)
     x_valid, y_valid = separar_features_target(valid)
+    x_test, y_test = separar_features_target(test)
 
     tags = {
         "dataset_sha256": hash_dataset(),
         "git_commit": _commit_actual(),
         "particion_train": ",".join(str(particion) for particion in PARTICIONES_TRAIN),
         "particion_valid": str(PARTICION_VALID),
+        "particion_test": str(PARTICION_TEST),
         "target": fc.TARGET,
     }
     if tags_adicionales:
@@ -162,7 +182,13 @@ def entrenar_y_registrar(
     with mlflow.start_run(run_name="comparacion-pm25"):
         mlflow.set_tags(tags)
         mlflow.log_params({"filas_por_particion": filas or "completa"})
-        mlflow.log_metrics({"filas_train": float(len(train)), "filas_valid": float(len(valid))})
+        mlflow.log_metrics(
+            {
+                "filas_train": float(len(train)),
+                "filas_valid": float(len(valid)),
+                "filas_test": float(len(test)),
+            }
+        )
 
         modelos: tuple[TipoModelo, ...] = ("baseline", "bosque")
         for modelo in modelos:
@@ -174,6 +200,9 @@ def entrenar_y_registrar(
                     x_valid=x_valid,
                     y_valid=y_valid,
                     estaciones_valid=valid[fc.COL_SUBGRUPO],
+                    x_test=x_test,
+                    y_test=y_test,
+                    estaciones_test=test[fc.COL_SUBGRUPO],
                     n_estimators=n_estimators,
                     registrar=registrar and modelo == "bosque",
                 )
