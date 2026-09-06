@@ -14,10 +14,9 @@ from pathlib import Path
 from typing import Final
 
 __all__ = [
+    "ALFA_DRIFT",
     "ARCHIVO_ZIP",
     "COL_TIEMPO",
-    "ALFA_DRIFT",
-    "UMBRAL_DRIFT_COLUMNAS"
     "DATA_DIR",
     "FILAS_POR_PARTICION",
     "FUENTE",
@@ -38,6 +37,7 @@ __all__ = [
     "REPORTS_DIR",
     "SEMILLA",
     "TODAS_LAS_PARTICIONES",
+    "UMBRAL_DRIFT_COLUMNAS",
     "URL_DATASET",
     "VERSION",
     "Particion",
@@ -137,6 +137,7 @@ def asegurar_directorios() -> None:
     """Crea los directorios de trabajo si no existen."""
     for directorio in (RAW_DIR, PROCESSED_DIR, REPORTS_DIR):
         directorio.mkdir(parents=True, exist_ok=True)
+
 
 # =============================================================================
 # Monitoreo de drift
