@@ -12,7 +12,7 @@ import argparse
 import json
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from prefect import flow, get_run_logger, task
@@ -23,8 +23,8 @@ from prefect.schedules import Cron
 from BeijingAir.config import (
     ESTADO_ENTRENAMIENTO,
     FILAS_POR_PARTICION,
-    PARTICIONES_TRAIN,
     PARTICION_VALID,
+    PARTICIONES_TRAIN,
     PREFECT_SCHEDULE_CRON,
     PREFECT_TIMEZONE,
 )
@@ -132,7 +132,7 @@ def persistir_estado(dataset_sha256: str) -> None:
     guardar_estado(
         EstadoEntrenamiento(
             dataset_sha256=dataset_sha256,
-            ejecutado_en_utc=datetime.now(timezone.utc).isoformat(),
+            ejecutado_en_utc=datetime.now(UTC).isoformat(),
         )
     )
 
