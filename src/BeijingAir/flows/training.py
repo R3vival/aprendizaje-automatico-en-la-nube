@@ -24,6 +24,7 @@ from prefect.schedules import Cron
 from BeijingAir.config import (
     ESTADO_ENTRENAMIENTO,
     FILAS_POR_PARTICION,
+    PARTICION_TEST,
     PARTICION_VALID,
     PARTICIONES_TRAIN,
     PREFECT_SCHEDULE_CRON,
@@ -103,18 +104,22 @@ def asegurar_origen() -> str:
     cache_expiration=timedelta(days=1),
     persist_result=True,
 )
-def preparar_datos(dataset_sha256: str, filas: int | None) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Prepara y valida train/valid una vez; el cache depende del hash y muestra."""
+def preparar_datos(
+    dataset_sha256: str, filas: int | None
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Prepara train, valid y test una vez; el cache depende del hash y muestra."""
     _ = dataset_sha256
     train = preparar_particiones(PARTICIONES_TRAIN, filas=filas)
     valid = preparar_particion(PARTICION_VALID, filas=filas)
-    return train, valid
+    test = preparar_particion(PARTICION_TEST, filas=filas)
+    return train, valid, test
 
 
 @task(name="entrenar-y-registrar")
 def ejecutar_entrenamiento(
     datos_train: pd.DataFrame,
     datos_valid: pd.DataFrame,
+    datos_test: pd.DataFrame,
     filas: int | None,
     n_estimators: int,
     prefect_flow_run_id: str,
@@ -127,6 +132,7 @@ def ejecutar_entrenamiento(
         tags_adicionales={"prefect_flow_run_id": prefect_flow_run_id},
         datos_train=datos_train,
         datos_valid=datos_valid,
+        datos_test=datos_test,
     )
     return {nombre: evaluacion.como_dict() for nombre, evaluacion in resultados.items()}
 
@@ -162,11 +168,16 @@ def flujo_entrenamiento(
         logger.info("No hay datos nuevos: se omite el reentrenamiento.")
         return ResultadoFlujo(False, dataset_sha256, {}, {})
 
-    datos_train, datos_valid = preparar_datos(dataset_sha256, filas)
-    filas_validadas = {"train": len(datos_train), "valid": len(datos_valid)}
+    datos_train, datos_valid, datos_test = preparar_datos(dataset_sha256, filas)
+    filas_validadas = {
+        "train": len(datos_train),
+        "valid": len(datos_valid),
+        "test": len(datos_test),
+    }
     resultados = ejecutar_entrenamiento(
         datos_train,
         datos_valid,
+        datos_test,
         filas,
         n_estimators,
         str(flow_run.id),
