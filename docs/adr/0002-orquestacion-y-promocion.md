@@ -15,7 +15,8 @@ en cada ejecución de un cron no añade señal cuando el hash no cambió.
 Usar Prefect para el flow `entrenamiento-beijing-pm25`. El flow:
 
 1. asegura el origen con reintentos para fallos transitorios de descarga;
-2. valida las particiones, con caché cuyo key incluye hash y tamaño de muestra;
+2. prepara y valida las particiones una sola vez, con caché cuyo key incluye
+   hash y tamaño de muestra; el módulo de entrenamiento reutiliza ese resultado;
 3. entrena y registra en MLflow el bosque como alias `candidate`;
 4. guarda la huella del dataset solo si toda la corrida fue exitosa.
 

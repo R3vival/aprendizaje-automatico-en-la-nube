@@ -125,6 +125,8 @@ def entrenar_y_registrar(
     n_estimators: int = 300,
     registrar: bool = False,
     tags_adicionales: Mapping[str, str] | None = None,
+    datos_train: pd.DataFrame | None = None,
+    datos_valid: pd.DataFrame | None = None,
 ) -> dict[str, ResultadoEvaluacion]:
     """Compara baseline y bosque sobre el split temporal fijo.
 
@@ -132,11 +134,17 @@ def entrenar_y_registrar(
     ``fit``. MLflow recibe un run padre con los datos de procedencia y un run
     anidado para cada candidato.
     """
+    if (datos_train is None) != (datos_valid is None):
+        raise ValueError("datos_train y datos_valid se deben proporcionar juntos.")
+
     mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
     mlflow.set_experiment(MLFLOW_EXPERIMENT)
-
-    train = preparar_particiones(PARTICIONES_TRAIN, filas=filas)
-    valid = preparar_particion(PARTICION_VALID, filas=filas)
+    if datos_train is None or datos_valid is None:
+        train = preparar_particiones(PARTICIONES_TRAIN, filas=filas)
+        valid = preparar_particion(PARTICION_VALID, filas=filas)
+    else:
+        train = datos_train
+        valid = datos_valid
     x_train, y_train = separar_features_target(train)
     x_valid, y_valid = separar_features_target(valid)
 

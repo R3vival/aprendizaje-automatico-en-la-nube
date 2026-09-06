@@ -7,6 +7,7 @@ import pytest
 
 from BeijingAir.features import contract as fc
 from BeijingAir.models.pipeline import crear_pipeline, evaluar_regresion, separar_features_target
+from BeijingAir.models.train import entrenar_y_registrar
 
 
 def dataframe_modelo() -> pd.DataFrame:
@@ -60,3 +61,9 @@ def test_evaluacion_rechaza_longitudes_distintas() -> None:
             predicciones=[1.0],
             estaciones=pd.Series(["A", "B"]),
         )
+
+
+def test_entrenamiento_exige_los_dos_datasets_preparados() -> None:
+    """El flow no puede mezclar un dataset precargado con una carga nueva."""
+    with pytest.raises(ValueError, match="proporcionar juntos"):
+        entrenar_y_registrar(datos_train=pd.DataFrame())

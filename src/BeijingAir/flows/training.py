@@ -15,6 +15,7 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import pandas as pd
 from prefect import flow, get_run_logger, task
 from prefect.cache_policies import INPUTS
 from prefect.runtime import flow_run
@@ -97,21 +98,23 @@ def asegurar_origen() -> str:
 
 
 @task(
-    name="validar-particiones",
+    name="preparar-y-validar-particiones",
     cache_policy=INPUTS,
     cache_expiration=timedelta(days=1),
     persist_result=True,
 )
-def validar_particiones(dataset_sha256: str, filas: int | None) -> dict[str, int]:
-    """Valida train y valid; el cache cambia si cambia el hash o el muestreo."""
+def preparar_datos(dataset_sha256: str, filas: int | None) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Prepara y valida train/valid una vez; el cache depende del hash y muestra."""
     _ = dataset_sha256
     train = preparar_particiones(PARTICIONES_TRAIN, filas=filas)
     valid = preparar_particion(PARTICION_VALID, filas=filas)
-    return {"train": len(train), "valid": len(valid)}
+    return train, valid
 
 
 @task(name="entrenar-y-registrar")
 def ejecutar_entrenamiento(
+    datos_train: pd.DataFrame,
+    datos_valid: pd.DataFrame,
     filas: int | None,
     n_estimators: int,
     prefect_flow_run_id: str,
@@ -122,6 +125,8 @@ def ejecutar_entrenamiento(
         n_estimators=n_estimators,
         registrar=True,
         tags_adicionales={"prefect_flow_run_id": prefect_flow_run_id},
+        datos_train=datos_train,
+        datos_valid=datos_valid,
     )
     return {nombre: evaluacion.como_dict() for nombre, evaluacion in resultados.items()}
 
@@ -157,8 +162,15 @@ def flujo_entrenamiento(
         logger.info("No hay datos nuevos: se omite el reentrenamiento.")
         return ResultadoFlujo(False, dataset_sha256, {}, {})
 
-    filas_validadas = validar_particiones(dataset_sha256, filas)
-    resultados = ejecutar_entrenamiento(filas, n_estimators, str(flow_run.id))
+    datos_train, datos_valid = preparar_datos(dataset_sha256, filas)
+    filas_validadas = {"train": len(datos_train), "valid": len(datos_valid)}
+    resultados = ejecutar_entrenamiento(
+        datos_train,
+        datos_valid,
+        filas,
+        n_estimators,
+        str(flow_run.id),
+    )
     persistir_estado(dataset_sha256)
     logger.info("Candidato registrado; la promocion la decide CI/CD, no este flow.")
     return ResultadoFlujo(True, dataset_sha256, filas_validadas, resultados)
