@@ -1,19 +1,14 @@
 #!/usr/bin/env python
-"""Smoke test del entorno.
+"""Smoke test del entorno del proyecto de MLOps.
 
 Ejecutalo como PRIMER paso, antes de cualquier otra cosa:
 
     uv run python scripts/smoke_test.py
 
-Por que existe: la auditoria del repositorio encontro que la unica verificacion
-de entorno era `python -V; uv --version`, que no prueba nada de lo que
-realmente falla. Los diagramas eran punteros de Git LFS sin traer, el puerto de
-MLflow estaba en 5000 en unos archivos y 5001 en otros, `plotly` se importaba
-sin estar declarado, y en Windows la ExecutionPolicy bloqueaba el script de
-setup. Cada uno de esos problemas costaba entre 10 y 40 minutos de clase.
-
-Este script los diagnostica en unos segundos y devuelve exit code != 0 si algo
-esta mal, de modo que tambien sirve como paso de CI.
+Verifica que el entorno esta listo: version de Python, herramientas (uv/make),
+dependencias instaladas, importacion del paquete ``BeijingAir``, contrato de
+datos, estructura del repositorio, puertos y servicios. Devuelve exit code != 0
+si algo falla, de modo que tambien sirve como paso de CI.
 """
 
 from __future__ import annotations
@@ -40,7 +35,7 @@ FIN = "\033[0m"
 if os.name == "nt" and not os.getenv("WT_SESSION"):
     VERDE = ROJO = AMARILLO = GRIS = FIN = ""
 
-# (modulo importable, nombre de distribucion, sesion en la que se usa)
+# (modulo importable, nombre de distribucion, fase del pipeline en que se usa)
 PAQUETES: list[tuple[str, str, str]] = [
     ("pandas", "pandas", "datos"),
     ("numpy", "numpy", "datos"),
@@ -108,17 +103,17 @@ def verificar_venv() -> None:
 
 def verificar_paquetes() -> None:
     faltantes: list[str] = []
-    for modulo, dist, sesion in PAQUETES:
+    for modulo, dist, fase in PAQUETES:
         try:
             importlib.import_module(modulo)
             try:
                 version = md.version(dist)
             except md.PackageNotFoundError:
                 version = "?"
-            ok(f"import {modulo}", f"{version}  [{sesion}]")
+            ok(f"import {modulo}", f"{version}  [{fase}]")
         except ImportError:
             faltantes.append(dist)
-            falla(f"import {modulo}", f"no instalado — requerido en {sesion}")
+            falla(f"import {modulo}", f"no instalado — requerido en {fase}")
     if faltantes:
         falla(
             "Dependencias completas",
@@ -308,18 +303,15 @@ def verificar_paquete() -> None:
         return
 
     ok(
-        "import beijing Air",
+        "import BeijingAir",
         f"{len(fc.FEATURES)} features, modelo '{config.MODELO_REGISTRADO}'",
     )
 
     # Prueba el contrato con datos sinteticos: no requiere red.
     import pandas as pd
 
+    # 1200 filas para cumplir el check volumen_minimo; PM2.5 con variacion.
     horas = pd.date_range("2023-01-02 08:00", periods=1200, freq="1min")
-    # Por qué * 300 en cada columna: horas tiene 1200 filas;
-    #: * 300 repite la lista de 4 valores hasta 1200 filas.
-    #: Con 1200 filas cumples el check volumen_minimo (≥ 100) y
-    #: variacion_de_target (PM2.5 no constante)
     crudo = pd.DataFrame(
         {
             fc.COL_TIEMPO: horas,
@@ -407,7 +399,8 @@ def verificar_docker() -> None:
     if shutil.which("docker") is None:
         aviso(
             "Docker disponible",
-            "necesario desde la S05. Instala Docker Desktop antes de esa sesion",
+            "necesario para levantar el stack de servicios (MLflow, MinIO). "
+            "Instala Docker Desktop antes de esa fase",
         )
         return
     proc = subprocess.run(

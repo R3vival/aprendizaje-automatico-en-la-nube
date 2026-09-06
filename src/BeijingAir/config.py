@@ -3,7 +3,7 @@
 Las decisiones que afectan a mas de un modulo viven aqui, en un solo lugar.
 Regla: si un valor aparece dos veces en el proyecto, sube aqui.
 
-Sin tildes: convencion del curso para archivos .py.
+Sin tildes: convencion del proyecto para archivos .py.
 """
 
 from __future__ import annotations
