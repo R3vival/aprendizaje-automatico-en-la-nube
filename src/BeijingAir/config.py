@@ -17,6 +17,7 @@ __all__ = [
     "ARCHIVO_ZIP",
     "COL_TIEMPO",
     "DATA_DIR",
+    "ESTADO_ENTRENAMIENTO",
     "FILAS_POR_PARTICION",
     "FUENTE",
     "LICENCIA",
@@ -29,6 +30,9 @@ __all__ = [
     "PARTICIONES_TRAIN",
     "PARTICION_TEST",
     "PARTICION_VALID",
+    "PREFECT_PORT",
+    "PREFECT_SCHEDULE_CRON",
+    "PREFECT_TIMEZONE",
     "PROCESSED_DIR",
     "PROJECT_ROOT",
     "PROYECTO",
@@ -59,6 +63,7 @@ DATA_DIR: Final[Path] = Path(os.getenv("DATA_DIR", PROJECT_ROOT / "data"))
 RAW_DIR: Final[Path] = DATA_DIR / "raw"
 PROCESSED_DIR: Final[Path] = DATA_DIR / "processed"
 REPORTS_DIR: Final[Path] = PROJECT_ROOT / "reports"
+ESTADO_ENTRENAMIENTO: Final[Path] = PROCESSED_DIR / "ultimo_entrenamiento.json"
 
 # =============================================================================
 # Fuente del dato
@@ -129,6 +134,14 @@ MLFLOW_TRACKING_URI: Final[str] = os.getenv(
 )
 MLFLOW_EXPERIMENT: Final[str] = "beijing-air"
 MODELO_REGISTRADO: Final[str] = "beijing-air-pm25"
+
+# =============================================================================
+# Orquestacion
+# =============================================================================
+#: Prefect se usa localmente durante el curso; la URI se configura por entorno.
+PREFECT_PORT: Final[int] = int(os.getenv("PREFECT_PORT", "4200"))
+PREFECT_SCHEDULE_CRON: Final[str] = "0 3 1 * *"
+PREFECT_TIMEZONE: Final[str] = "America/Bogota"
 
 
 def asegurar_directorios() -> None:

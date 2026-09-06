@@ -43,6 +43,7 @@ aprendizaje-automatico-en-la-nube/
 │   ├── data/               cargar y VALIDAR datos
 │   ├── features/           construir variables
 │   ├── models/             entrenar y evaluar
+│   ├── flows/              orquestar entrenamiento con Prefect
 │   ├── api/                servir el modelo
 │   └── monitoring/         vigilarlo
 ├── notebooks/            exploración y narrativa — importa de src/, no define lógica
@@ -68,6 +69,9 @@ make check        # lint + tipos + tests, en local
 make validate-data # descarga y valida las particiones reales contra el contrato
 make mlflow       # inicia MLflow en http://127.0.0.1:5001 (dejar esta terminal abierta)
 make train        # entrena baseline y bosque, y registra las corridas en MLflow
+make prefect-server # inicia Prefect en http://127.0.0.1:4200
+make flow          # valida, entrena y registra un candidato con Prefect
+make serve-flow    # deja servido el schedule mensual de Prefect
 make clean        # borra caches y artefactos temporales
 ```
 
@@ -75,6 +79,12 @@ Para entrenar, abre dos terminales Git Bash: en la primera ejecuta `make mlflow`
 y en la segunda `make train`. MLflow registra el hash del dataset, las
 particiones, el commit, parámetros, métricas globales y por estación, además del
 modelo con su firma de entrada.
+
+Para la sesión de orquestación usa tres terminales: `make mlflow`,
+`make prefect-server` y `make flow`. El flow reintenta solo la descarga, valida
+los datos antes de entrenar y registra el bosque como `candidate` en MLflow. El
+schedule mensual de `make serve-flow` despierta el flow, pero este solo
+reentrena si cambió el hash del dataset; no promueve modelos automáticamente.
 
 ## Créditos
 

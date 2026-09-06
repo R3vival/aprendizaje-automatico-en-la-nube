@@ -10,7 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import subprocess
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
 import mlflow
 import mlflow.sklearn
@@ -54,7 +54,7 @@ def _commit_actual() -> str:
     return resultado.stdout.strip()
 
 
-def _hash_dataset() -> str:
+def hash_dataset() -> str:
     """Lee el hash registrado en metadata.json sin cargar los datos completos."""
     ruta_metadata = RAW_DIR / "metadata.json"
     if not ruta_metadata.exists():
@@ -104,13 +104,18 @@ def _loggear_corrida(
     ejemplo_entrada = x_train.head(3)
     firma = infer_signature(ejemplo_entrada, pipeline.predict(ejemplo_entrada))
     kwargs_modelo: dict[str, object] = {
-        "artifact_path": "model",
+        "name": "model",
         "input_example": ejemplo_entrada,
         "signature": firma,
     }
     if registrar:
         kwargs_modelo["registered_model_name"] = MODELO_REGISTRADO
-    mlflow.sklearn.log_model(pipeline, **kwargs_modelo)
+    informacion_modelo = mlflow.sklearn.log_model(pipeline, **kwargs_modelo)
+    version_registrada = getattr(informacion_modelo, "registered_model_version", None)
+    if registrar and version_registrada:
+        mlflow.MlflowClient().set_registered_model_alias(
+            MODELO_REGISTRADO, "candidate", str(version_registrada)
+        )
     return evaluacion
 
 
@@ -119,6 +124,7 @@ def entrenar_y_registrar(
     filas: int | None = FILAS_POR_PARTICION,
     n_estimators: int = 300,
     registrar: bool = False,
+    tags_adicionales: Mapping[str, str] | None = None,
 ) -> dict[str, ResultadoEvaluacion]:
     """Compara baseline y bosque sobre el split temporal fijo.
 
@@ -135,12 +141,14 @@ def entrenar_y_registrar(
     x_valid, y_valid = separar_features_target(valid)
 
     tags = {
-        "dataset_sha256": _hash_dataset(),
+        "dataset_sha256": hash_dataset(),
         "git_commit": _commit_actual(),
         "particion_train": ",".join(str(particion) for particion in PARTICIONES_TRAIN),
         "particion_valid": str(PARTICION_VALID),
         "target": fc.TARGET,
     }
+    if tags_adicionales:
+        tags.update(tags_adicionales)
     resultados: dict[str, ResultadoEvaluacion] = {}
 
     with mlflow.start_run(run_name="comparacion-pm25"):
