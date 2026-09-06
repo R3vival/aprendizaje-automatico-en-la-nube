@@ -14,10 +14,11 @@ from pathlib import Path
 from typing import Final
 
 __all__ = [
+    "ALFA_DRIFT",
+    "ALIAS_CANDIDATO",
+    "ALIAS_PRODUCCION",
     "ARCHIVO_ZIP",
     "COL_TIEMPO",
-    "ALFA_DRIFT",
-    "UMBRAL_DRIFT_COLUMNAS"
     "DATA_DIR",
     "FILAS_POR_PARTICION",
     "FUENTE",
@@ -37,7 +38,9 @@ __all__ = [
     "RAW_DIR",
     "REPORTS_DIR",
     "SEMILLA",
+    "TAG_VALIDACION",
     "TODAS_LAS_PARTICIONES",
+    "UMBRAL_DRIFT_COLUMNAS",
     "URL_DATASET",
     "VERSION",
     "Particion",
@@ -132,11 +135,21 @@ MLFLOW_TRACKING_URI: Final[str] = os.getenv(
 MLFLOW_EXPERIMENT: Final[str] = "beijing-air"
 MODELO_REGISTRADO: Final[str] = "beijing-air-pm25"
 
+#: Alias de produccion. Reemplazan a los stages, deprecados desde MLflow 2.9.
+#: Un alias es una referencia mutable a "la version que sirve"; el rollback es
+#: moverlo de vuelta, y eso es una escritura de metadatos.
+ALIAS_PRODUCCION: Final[str] = "champion"
+ALIAS_CANDIDATO: Final[str] = "candidate"
+#: Tag que el gate escribe ANTES de mover el alias, para dejar registrado
+#: por que se promovio (o por que no).
+TAG_VALIDACION: Final[str] = "validation_status"
+
 
 def asegurar_directorios() -> None:
     """Crea los directorios de trabajo si no existen."""
     for directorio in (RAW_DIR, PROCESSED_DIR, REPORTS_DIR):
         directorio.mkdir(parents=True, exist_ok=True)
+
 
 # =============================================================================
 # Monitoreo de drift
