@@ -60,8 +60,8 @@ COLUMNAS_CRUDAS_REQUERIDAS: Final[list[str]] = [
 # Columnas DERIVADAS por el pipeline
 # =============================================================================
 #: Temporada del anio, derivada del mes. Es la TERCERA categorica: el dataset
-#: solo trae dos categoricas nativas (station, wd), y el requisito duro del curso
-#: pide minimo tres. Captura el ciclo anual de la contaminacion (invierno peor).
+#: solo trae dos categoricas nativas (station, wd), y el proyecto requiere minimo
+#: tres. Captura el ciclo anual de la contaminacion (invierno peor).
 COL_TEMPORADA: Final[str] = "temporada"
 DERIVADAS_CATEGORICAS: Final[list[str]] = [COL_TEMPORADA]
 

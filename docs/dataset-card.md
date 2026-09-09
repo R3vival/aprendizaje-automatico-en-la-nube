@@ -11,7 +11,7 @@
 | Tamaño | 420.768 filas × 18 columnas · 8.192.212 bytes comprimido |
 | Hash de las particiones | ver `data/raw/metadata.json` |
 
-## Cumplimiento de los requisitos duros del curso
+## Cumplimiento de los requisitos del proyecto
 
 | Requisito | ¿Cumple? | Evidencia o justificación |
 |---|---|---|

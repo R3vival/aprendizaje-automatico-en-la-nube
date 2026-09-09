@@ -27,9 +27,9 @@ from prefect.runtime import flow_run
 from prefect.schedules import Cron
 
 from BeijingAir.config import (
-    ALIAS_CANDIDATO,
     ESTADO_ENTRENAMIENTO,
     FILAS_POR_PARTICION,
+    MODELO_ALIAS_CANDIDATO,
     MODELO_REGISTRADO,
     PARTICION_TEST,
     PARTICION_VALID,
@@ -181,7 +181,9 @@ def marcar_candidato() -> str:
 
     ultima = max(versiones, key=lambda v: int(v.version))
     cliente.set_model_version_tag(MODELO_REGISTRADO, ultima.version, TAG_VALIDACION, "pending")
-    logger.info("version %s marcada como @%s (champion sin tocar)", ultima.version, ALIAS_CANDIDATO)
+    logger.info(
+        "version %s marcada como @%s (champion sin tocar)", ultima.version, MODELO_ALIAS_CANDIDATO
+    )
     return str(ultima.version)
 
 

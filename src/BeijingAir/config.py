@@ -3,7 +3,7 @@
 Las decisiones que afectan a mas de un modulo viven aqui, en un solo lugar.
 Regla: si un valor aparece dos veces en el proyecto, sube aqui.
 
-Sin tildes: convencion del curso para archivos .py.
+Sin tildes: convencion del proyecto para archivos .py.
 """
 
 from __future__ import annotations
@@ -15,8 +15,6 @@ from typing import Final
 
 __all__ = [
     "ALFA_DRIFT",
-    "ALIAS_CANDIDATO",
-    "ALIAS_PRODUCCION",
     "API_PORT",
     "ARCHIVO_ZIP",
     "COL_TIEMPO",
@@ -171,16 +169,10 @@ MAX_EMPEORAMIENTO_MAE: Final[float] = float(os.getenv("MAX_EMPEORAMIENTO_MAE", "
 # =============================================================================
 # Orquestacion
 # =============================================================================
-#: Prefect se usa localmente durante el curso; la URI se configura por entorno.
+#: Prefect se usa localmente; la URI se configura por entorno.
 PREFECT_PORT: Final[int] = int(os.getenv("PREFECT_PORT", "4200"))
 PREFECT_SCHEDULE_CRON: Final[str] = "0 3 1 * *"
 PREFECT_TIMEZONE: Final[str] = "America/Bogota"
-
-#: Alias de produccion. Reemplazan a los stages, deprecados desde MLflow 2.9.
-#: Un alias es una referencia mutable a "la version que sirve"; el rollback es
-#: moverlo de vuelta, y eso es una escritura de metadatos.
-ALIAS_PRODUCCION: Final[str] = "champion"
-ALIAS_CANDIDATO: Final[str] = "candidate"
 #: Tag que el gate escribe ANTES de mover el alias, para dejar registrado
 #: por que se promovio (o por que no).
 TAG_VALIDACION: Final[str] = "validation_status"
@@ -196,7 +188,6 @@ def asegurar_directorios() -> None:
 # Monitoreo de drift
 # =============================================================================
 #: Fraccion de columnas con drift que dispara la alerta.
-#: TODO: justificar este numero en docs/politica-de-reentrenamiento.md.
 UMBRAL_DRIFT_COLUMNAS: Final[float] = 0.30
 
 #: Nivel de significancia de los tests por columna. Ojo: con 420.768 filas TODO

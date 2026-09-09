@@ -34,9 +34,6 @@ Uso:
 
     python -m BeijingAir.monitoring.check_drift        # exit 1 si hay drift
 
-TODO(estudiante) 19: elige y justifica tu umbral en
-docs/politica-de-reentrenamiento.md. "0.30 porque venia en el template" no es
-una justificacion.
 """
 
 from __future__ import annotations
