@@ -14,6 +14,9 @@ from pathlib import Path
 from typing import Final
 
 __all__ = [
+    "ALFA_DRIFT",
+    "ALIAS_CANDIDATO",
+    "ALIAS_PRODUCCION",
     "API_PORT",
     "ARCHIVO_ZIP",
     "COL_TIEMPO",
@@ -46,7 +49,9 @@ __all__ = [
     "RAW_DIR",
     "REPORTS_DIR",
     "SEMILLA",
+    "TAG_VALIDACION",
     "TODAS_LAS_PARTICIONES",
+    "UMBRAL_DRIFT_COLUMNAS",
     "URL_DATASET",
     "VERSION",
     "Particion",
@@ -171,8 +176,30 @@ PREFECT_PORT: Final[int] = int(os.getenv("PREFECT_PORT", "4200"))
 PREFECT_SCHEDULE_CRON: Final[str] = "0 3 1 * *"
 PREFECT_TIMEZONE: Final[str] = "America/Bogota"
 
+#: Alias de produccion. Reemplazan a los stages, deprecados desde MLflow 2.9.
+#: Un alias es una referencia mutable a "la version que sirve"; el rollback es
+#: moverlo de vuelta, y eso es una escritura de metadatos.
+ALIAS_PRODUCCION: Final[str] = "champion"
+ALIAS_CANDIDATO: Final[str] = "candidate"
+#: Tag que el gate escribe ANTES de mover el alias, para dejar registrado
+#: por que se promovio (o por que no).
+TAG_VALIDACION: Final[str] = "validation_status"
+
 
 def asegurar_directorios() -> None:
     """Crea los directorios de trabajo si no existen."""
     for directorio in (RAW_DIR, PROCESSED_DIR, REPORTS_DIR):
         directorio.mkdir(parents=True, exist_ok=True)
+
+
+# =============================================================================
+# Monitoreo de drift
+# =============================================================================
+#: Fraccion de columnas con drift que dispara la alerta.
+#: TODO: justificar este numero en docs/politica-de-reentrenamiento.md.
+UMBRAL_DRIFT_COLUMNAS: Final[float] = 0.30
+
+#: Nivel de significancia de los tests por columna. Ojo: con 420.768 filas TODO
+#: sale significativo, asi que el p-valor NO decide solo; el codigo exige
+#: ademas un tamano de efecto minimo.
+ALFA_DRIFT: Final[float] = 0.05

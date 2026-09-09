@@ -39,8 +39,9 @@ from BeijingAir.features import contract as fc
 #: significa que la ingesta se corto, no que hubo 12 lecturas ese mes.
 VOLUMEN_MINIMO: Final[int] = 100
 
-#: Contaminantes en ug/m3. Rango observado mas margen. PM2.5/PM10 se saturan en
-#: 999 (cap del instrumento); CO va 100..10000.
+#: Contaminantes en ug/m3. Rango observado mas margen. El maximo observado en
+#: PM2.5/PM10 es 999 (4 filas en todo el dataset: valores extremos aislados, no
+#: saturacion del instrumento); CO va 100..10000.
 PM_MIN: Final[float] = 0.0
 PM_MAX: Final[float] = 1000.0
 SO2_MAX: Final[float] = 600.0

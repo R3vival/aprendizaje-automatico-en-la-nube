@@ -13,7 +13,7 @@ SHELL := /bin/bash
 UV := uv
 PY := $(UV) run
 
-.PHONY: help setup data test test-fast lint format typecheck check validate-data mlflow prefect-server train flow serve-flow serve promote-check clean
+.PHONY: help setup data test test-fast lint format typecheck check validate-data mlflow prefect-server train flow serve-flow serve promote-check drift flow clean
 
 # =============================================================================
 help: ## Muestra los targets disponibles
@@ -70,11 +70,17 @@ mlflow: ## Inicia el servidor local de tracking en http://127.0.0.1:5001
 train: ## Entrena baseline y bosque, y registra ambos en MLflow
 	$(PY) python -m BeijingAir.models.train
 
+# =============================================================================
+# Monitoreo
+# =============================================================================
+drift: ## Reporte de drift: referencia vs produccion simulada
+	$(PY) python -m BeijingAir.monitoring.check_drift
+
+flow: ## Pipeline de entrenamiento orquestado con Prefect
+	PYTHONUTF8=1 $(PY) python -m BeijingAir.flows.training
+
 prefect-server: ## Inicia Prefect en http://127.0.0.1:4200
 	$(PY) prefect server start
-
-flow: ## Ejecuta una corrida orquestada de validacion y entrenamiento
-	$(PY) python -m BeijingAir.flows.training
 
 serve-flow: ## Deja servido el schedule mensual de entrenamiento en Prefect
 	$(PY) python -m BeijingAir.flows.training --serve

@@ -110,9 +110,9 @@ mlflow.db
 *.db-journal
 outputs/
 reports/*.html
-# Resultado del check de drift (S07). Es un artefacto de corrida, como el HTML:
-# se regenera con `python -m taxi.monitoring.check_drift` y lo consume el CI del
-# mismo job que lo produjo. Versionarlo generaria un diff en cada ejecucion.
+# ...pero el reporte de drift SI va al repo: es la evidencia que pide la
+# rubrica de monitoreo. Los demas HTML de reports/ siguen ignorados.
+!reports/drift-report.html
 reports/*.json
 !reports/.gitkeep
 

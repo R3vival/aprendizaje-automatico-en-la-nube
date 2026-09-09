@@ -1,9 +1,13 @@
 """Flow de entrenamiento reproducible para BeijingAir.
 
 Prefect responde cuando y como corrio el pipeline; MLflow conserva los
-parametros, las metricas y el modelo que produjo cada corrida. Este modulo no
-promueve modelos: solo registra el candidato que despues evaluara el gate de
-CI/CD.
+parametros, las metricas y el modelo que produjo cada corrida. Este modulo NO
+implementa logica de ML: la orquesta. El entrenamiento vive en
+``models/train.py`` y la preparacion de datos en ``data/loaders.py``.
+
+Este flow registra un CANDIDATO y NO lo promueve: la promocion la decide el
+gate de CI/CD (``models/promote.py``). Para decidir si reentrenar usa el hash
+del dataset (llegada de datos), no una frecuencia arbitraria.
 """
 
 from __future__ import annotations
@@ -17,18 +21,22 @@ from pathlib import Path
 
 import pandas as pd
 from prefect import flow, get_run_logger, task
+from prefect.artifacts import create_table_artifact
 from prefect.cache_policies import INPUTS
 from prefect.runtime import flow_run
 from prefect.schedules import Cron
 
 from BeijingAir.config import (
+    ALIAS_CANDIDATO,
     ESTADO_ENTRENAMIENTO,
     FILAS_POR_PARTICION,
+    MODELO_REGISTRADO,
     PARTICION_TEST,
     PARTICION_VALID,
     PARTICIONES_TRAIN,
     PREFECT_SCHEDULE_CRON,
     PREFECT_TIMEZONE,
+    TAG_VALIDACION,
 )
 from BeijingAir.data.loaders import asegurar_crudo, preparar_particion, preparar_particiones
 from BeijingAir.models.train import entrenar_y_registrar, hash_dataset
@@ -137,6 +145,57 @@ def ejecutar_entrenamiento(
     return {nombre: evaluacion.como_dict() for nombre, evaluacion in resultados.items()}
 
 
+@task(name="evaluar", description="Elige el mejor candidato segun la metrica.")
+def evaluar(resultados: dict[str, MetricasModelo]) -> tuple[str, MetricasModelo]:
+    """Selecciona el candidato con menor RMSE de validacion."""
+    logger = get_run_logger()
+
+    def _rmse(item: tuple[str, MetricasModelo]) -> float:
+        metricas = item[1]
+        for clave in ("rmse_valid", "rmse", "RMSE"):
+            valor = metricas.get(clave)
+            if isinstance(valor, float):
+                return valor
+        raise KeyError(f"No encuentro el RMSE en {list(metricas)}")
+
+    nombre, metricas = min(resultados.items(), key=_rmse)
+    logger.info("mejor candidato: %s", nombre)
+    return nombre, metricas
+
+
+@task(name="marcar-candidato", description="Marca la version candidata con el tag de validacion.")
+def marcar_candidato() -> str:
+    """Deja el tag de validacion ``pending`` en la ultima version registrada.
+
+    El alias ``@candidate`` ya lo asigna ``models/train.py`` al registrar el
+    bosque. Esta task agrega el tag que el gate usa para auditar por que no se
+    promovio aun; no mueve ``@champion``.
+    """
+    from mlflow import MlflowClient
+
+    logger = get_run_logger()
+    cliente = MlflowClient()
+    versiones = cliente.search_model_versions(f"name='{MODELO_REGISTRADO}'")
+    if not versiones:
+        raise RuntimeError(f"No hay versiones registradas de {MODELO_REGISTRADO}")
+
+    ultima = max(versiones, key=lambda v: int(v.version))
+    cliente.set_model_version_tag(MODELO_REGISTRADO, ultima.version, TAG_VALIDACION, "pending")
+    logger.info("version %s marcada como @%s (champion sin tocar)", ultima.version, ALIAS_CANDIDATO)
+    return str(ultima.version)
+
+
+@task(name="publicar-reporte", description="Publica la tabla de metricas.")
+def publicar_reporte(resultados: dict[str, MetricasModelo]) -> None:
+    """Deja la tabla de metricas junto a la corrida, en la UI de Prefect."""
+    filas = [{"modelo": nombre, **metricas} for nombre, metricas in resultados.items()]
+    create_table_artifact(
+        key="metricas-entrenamiento",
+        table=filas,
+        description="Metricas de los candidatos de esta corrida.",
+    )
+
+
 @task(name="guardar-estado")
 def persistir_estado(dataset_sha256: str) -> None:
     """Marca como procesada esta version del dataset tras una corrida exitosa."""
@@ -155,7 +214,7 @@ def flujo_entrenamiento(
     n_estimators: int = 300,
     forzar: bool = False,
 ) -> ResultadoFlujo:
-    """Orquesta validar -> entrenar -> registrar candidato -> guardar estado.
+    """Orquesta extraer -> validar -> preparar -> entrenar -> evaluar -> registrar.
 
     El schedule mensual despierta el flow, pero este solo reentrena si la huella
     del dataset es nueva. ``--forzar`` existe para probar cambios de codigo o
@@ -182,6 +241,9 @@ def flujo_entrenamiento(
         n_estimators,
         str(flow_run.id),
     )
+    evaluar(resultados)
+    publicar_reporte(resultados)
+    marcar_candidato()
     persistir_estado(dataset_sha256)
     logger.info("Candidato registrado; la promocion la decide CI/CD, no este flow.")
     return ResultadoFlujo(True, dataset_sha256, filas_validadas, resultados)
