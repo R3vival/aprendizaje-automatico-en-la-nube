@@ -65,6 +65,10 @@ COLUMNAS_CRUDAS_REQUERIDAS: Final[list[str]] = [
 COL_TEMPORADA: Final[str] = "temporada"
 DERIVADAS_CATEGORICAS: Final[list[str]] = [COL_TEMPORADA]
 
+#: Valores que genera ``_mes_a_temporada``. El contrato procesado y la API
+#: comparten esta constante para que no aparezcan reglas distintas de negocio.
+TEMPORADAS_VALIDAS: Final[frozenset[str]] = frozenset({"invierno", "primavera", "verano", "otonio"})
+
 #: Features de calendario. La contaminacion de un martes a las 9am no se parece
 #: a la de un domingo a las 3am, y el modelo no puede inferirlo de un timestamp.
 COL_HORA: Final[str] = "hora"

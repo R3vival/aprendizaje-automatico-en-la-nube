@@ -15,27 +15,41 @@ from typing import Final
 
 __all__ = [
     "ALFA_DRIFT",
+    "ALIAS_CANDIDATO",
+    "ALIAS_PRODUCCION",
+    "API_PORT",
     "ARCHIVO_ZIP",
     "COL_TIEMPO",
     "DATA_DIR",
+    "ESTADO_ENTRENAMIENTO",
     "FILAS_POR_PARTICION",
     "FUENTE",
     "LICENCIA",
     "LICENCIA_URL",
+    "MAX_EMPEORAMIENTO_MAE",
+    "MAX_MAE_TEST",
+    "MIN_R2_TEST",
     "MLFLOW_EXPERIMENT",
     "MLFLOW_PORT",
     "MLFLOW_TRACKING_URI",
+    "MODELO_ALIAS",
+    "MODELO_ALIAS_CANDIDATO",
     "MODELO_REGISTRADO",
+    "MODELO_URI",
     "PARTICIONES_PRODUCCION",
     "PARTICIONES_TRAIN",
     "PARTICION_TEST",
     "PARTICION_VALID",
+    "PREFECT_PORT",
+    "PREFECT_SCHEDULE_CRON",
+    "PREFECT_TIMEZONE",
     "PROCESSED_DIR",
     "PROJECT_ROOT",
     "PROYECTO",
     "RAW_DIR",
     "REPORTS_DIR",
     "SEMILLA",
+    "TAG_VALIDACION",
     "TODAS_LAS_PARTICIONES",
     "UMBRAL_DRIFT_COLUMNAS",
     "URL_DATASET",
@@ -61,6 +75,7 @@ DATA_DIR: Final[Path] = Path(os.getenv("DATA_DIR", PROJECT_ROOT / "data"))
 RAW_DIR: Final[Path] = DATA_DIR / "raw"
 PROCESSED_DIR: Final[Path] = DATA_DIR / "processed"
 REPORTS_DIR: Final[Path] = PROJECT_ROOT / "reports"
+ESTADO_ENTRENAMIENTO: Final[Path] = PROCESSED_DIR / "ultimo_entrenamiento.json"
 
 # =============================================================================
 # Fuente del dato
@@ -131,6 +146,44 @@ MLFLOW_TRACKING_URI: Final[str] = os.getenv(
 )
 MLFLOW_EXPERIMENT: Final[str] = "beijing-air"
 MODELO_REGISTRADO: Final[str] = "beijing-air-pm25"
+
+# =============================================================================
+# Serving
+# =============================================================================
+#: La API consulta el Registry; nunca carga un .pkl copiado en la imagen.
+#: ``champion`` se asignara mediante el gate de promocion de CI/CD. Mientras no
+#: exista, la API informa estado degradado sin caerse ni servir ``candidate``.
+MODELO_ALIAS: Final[str] = os.getenv("MODELO_ALIAS", "champion")
+MODELO_ALIAS_CANDIDATO: Final[str] = os.getenv("MODELO_ALIAS_CANDIDATO", "candidate")
+MODELO_URI: Final[str] = os.getenv("MODELO_URI", f"models:/{MODELO_REGISTRADO}@{MODELO_ALIAS}")
+API_PORT: Final[int] = int(os.getenv("API_PORT", "8000"))
+
+# =============================================================================
+# Gate de promocion
+# =============================================================================
+#: Limites iniciales para el holdout temporal ``test``. Se pueden ajustar por
+#: variables de entorno sin cambiar el codigo; el gate falla cerrado si faltan
+#: las metricas del candidato o si empeora frente a champion.
+MAX_MAE_TEST: Final[float] = float(os.getenv("MAX_MAE_TEST", "45.0"))
+MIN_R2_TEST: Final[float] = float(os.getenv("MIN_R2_TEST", "0.0"))
+MAX_EMPEORAMIENTO_MAE: Final[float] = float(os.getenv("MAX_EMPEORAMIENTO_MAE", "0.05"))
+
+# =============================================================================
+# Orquestacion
+# =============================================================================
+#: Prefect se usa localmente durante el curso; la URI se configura por entorno.
+PREFECT_PORT: Final[int] = int(os.getenv("PREFECT_PORT", "4200"))
+PREFECT_SCHEDULE_CRON: Final[str] = "0 3 1 * *"
+PREFECT_TIMEZONE: Final[str] = "America/Bogota"
+
+#: Alias de produccion. Reemplazan a los stages, deprecados desde MLflow 2.9.
+#: Un alias es una referencia mutable a "la version que sirve"; el rollback es
+#: moverlo de vuelta, y eso es una escritura de metadatos.
+ALIAS_PRODUCCION: Final[str] = "champion"
+ALIAS_CANDIDATO: Final[str] = "candidate"
+#: Tag que el gate escribe ANTES de mover el alias, para dejar registrado
+#: por que se promovio (o por que no).
+TAG_VALIDACION: Final[str] = "validation_status"
 
 
 def asegurar_directorios() -> None:

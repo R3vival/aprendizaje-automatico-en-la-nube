@@ -1,0 +1,81 @@
+name: Promover modelo
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_version:
+        description: Version del candidato; vacio usa el alias candidate.
+        required: false
+        type: string
+      max_mae_test:
+        description: MAE maximo aceptable sobre la particion test.
+        required: true
+        default: "45"
+        type: string
+      min_r2_test:
+        description: R2 minimo aceptable sobre la particion test.
+        required: true
+        default: "0"
+        type: string
+      max_empeoramiento_mae:
+        description: Fraccion maxima de empeoramiento frente a champion.
+        required: true
+        default: "0.05"
+        type: string
+      dry_run:
+        description: Solo evaluar; no mover el alias champion.
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  promover:
+    name: Gate de calidad y promocion
+    runs-on: ubuntu-latest
+    # Configurar reglas de aprobacion para este Environment desde GitHub antes
+    # de permitir dry_run=false en un repositorio compartido.
+    environment: production
+    env:
+      MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verificar configuracion de Registry
+        run: |
+          test -n "$MLFLOW_TRACKING_URI" || {
+            echo "Falta el secreto MLFLOW_TRACKING_URI del entorno production." >&2
+            exit 1
+          }
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Instalar dependencias bloqueadas
+        run: uv sync --group dev --locked
+
+      - name: Evaluar y promover candidato
+        env:
+          CANDIDATE_VERSION: ${{ inputs.candidate_version }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          MAX_MAE_TEST: ${{ inputs.max_mae_test }}
+          MIN_R2_TEST: ${{ inputs.min_r2_test }}
+          MAX_EMPEORAMIENTO_MAE: ${{ inputs.max_empeoramiento_mae }}
+        run: |
+          argumentos=(
+            --max-mae-test "$MAX_MAE_TEST"
+            --min-r2-test "$MIN_R2_TEST"
+            --max-empeoramiento-mae "$MAX_EMPEORAMIENTO_MAE"
+          )
+          if [ -n "$CANDIDATE_VERSION" ]; then
+            argumentos+=(--candidate-version "$CANDIDATE_VERSION")
+          fi
+          if [ "$DRY_RUN" = "true" ]; then
+            argumentos+=(--dry-run)
+          fi
+          uv run python -m BeijingAir.models.promote "${argumentos[@]}"

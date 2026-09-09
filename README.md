@@ -4,7 +4,11 @@ Repositorio para el Trabajo final de **aprendizaje automático en la nube**. Est
 proyecto toma como base el repositorio [`MLOps-Course`](https://github.com/dpalacioj/MLOps-Course)
 para estructura, convenciones y configuración.
 
-# Integrantes: 
+Predice la concentración horaria de **PM2.5** en 12 estaciones de monitoreo de
+Beijing, a partir de meteorología y otros contaminantes.
+
+## Integrantes
+
 - Juan Pablo Arango
 - Alejandro Taborda
 - Daniel Gomez
@@ -16,14 +20,17 @@ para estructura, convenciones y configuración.
 > (`Makefile` usa `SHELL := /bin/bash` y herramientas de Unix como `grep`,
 > `awk` y `find`).
 > - **macOS/Linux:** funcionan tal cual en la terminal normal.
-> - **Windows:** ejecutalos desde **Git Bash** (ver abajo), no desde
->   PowerShell/CMD. Desde PowerShell `make` usa `cmd.exe`, que no entiende esas
->   herramientas y falla.
+> - **Windows:** ejecútalos desde **Git Bash**, no desde PowerShell/CMD. Desde
+>   PowerShell `make` usa `cmd.exe`, que no entiende esas herramientas y falla.
 
 ```bash
 make setup        # instala dependencias y los hooks de pre-commit
 make check        # lint + tipos + tests, lo mismo que verifica el CI
-# Windows: abrir "Git Bash" desde el menú Inicio, ir al proyecto y ejecutar:
+```
+
+En Windows: abrir **Git Bash** desde el menú Inicio, ir al proyecto y ejecutar:
+
+```bash
 cd aprendizaje-automatico-en-la-nube
 make setup
 make check
@@ -33,57 +40,164 @@ make check
 
 ```
 aprendizaje-automatico-en-la-nube/
-├── pyproject.toml        las dependencias del proyecto
-├── uv.lock               exactamente qué quedó instalado
-├── Makefile              los comandos del proyecto, con nombre corto
+├── pyproject.toml           las dependencias del proyecto
+├── uv.lock                  exactamente qué quedó instalado
+├── Makefile                 los comandos del proyecto, con nombre corto
 ├── .pre-commit-config.yaml  hooks de calidad instalados con make setup
-├── .github/workflows/    el CI: lo que se verifica en cada push
-├── src/BeijingAir/       el código de verdad, como paquete instalable
-│   ├── config.py           las decisiones en un solo lugar
-│   ├── data/               cargar y VALIDAR datos
-│   ├── features/           construir variables
-│   ├── models/             entrenar y evaluar
-│   ├── api/                servir el modelo
-│   └── monitoring/         vigilarlo
-├── notebooks/            exploración y narrativa — importa de src/, no define lógica
-├── tests/                lo que protege a src/ de nosotros mismos
-├── data/                 los datos NO se versionan; la carpeta sí existe
-│   ├── raw/                tal como llegaron, intocables
-│   └── processed/          lo que produce el pipeline
-├── configs/              parámetros por entorno, si los hay
-├── models/               artefactos locales — tampoco se versionan
-└── docs/                 decisiones, fichas de datos y del modelo
+├── .github/workflows/       el CI: lo que se verifica en cada push
+├── src/BeijingAir/          el código de verdad, como paquete instalable
+│   ├── config.py              las decisiones en un solo lugar
+│   ├── data/                  descargar, cargar y VALIDAR datos
+│   ├── features/              construir variables
+│   ├── models/                entrenar, evaluar y promover
+│   ├── flows/                 el pipeline orquestado con Prefect
+│   ├── api/                   servir el modelo
+│   └── monitoring/            vigilarlo
+├── notebooks/               exploración y narrativa — importa de src/, no define lógica
+├── tests/                   lo que protege a src/ de nosotros mismos
+├── data/                    los datos NO se versionan; la carpeta sí existe
+│   ├── raw/                   tal como llegaron, intocables
+│   │   └── metadata.json      la procedencia SÍ se versiona: url, hash, licencia
+│   └── processed/             lo que produce el pipeline
+├── reports/                 reportes generados (el de drift sí se versiona)
+├── models/                  artefactos locales — tampoco se versionan
+└── docs/                    decisiones, fichas de datos y del modelo
 ```
 
 ## Comandos frecuentes
 
 ```bash
-make setup        # instala dependencias y los hooks de pre-commit
-make lint         # revisa estilo con ruff
-make format       # formatea con ruff
-make typecheck    # verifica tipos con mypy
-make test         # corre todos los tests
-make test-fast    # corre solo los tests sin red ni servicios
-make check        # lint + tipos + tests, en local
+make setup         # instala dependencias y los hooks de pre-commit
+make data          # descarga y extrae el dataset Beijing
+make lint          # revisa estilo con ruff
+make format        # formatea con ruff
+make typecheck     # verifica tipos con mypy
+make test          # corre todos los tests
+make test-fast     # corre solo los tests sin red ni servicios
+make check         # lint + tipos + tests, en local
 make validate-data # descarga y valida las particiones reales contra el contrato
-make mlflow       # inicia MLflow en http://127.0.0.1:5001 (dejar esta terminal abierta)
-make train        # entrena baseline y bosque, y registra las corridas en MLflow
-make clean        # borra caches y artefactos temporales
+make mlflow         # inicia MLflow en http://127.0.0.1:5001 (dejar esta terminal abierta)
+make train          # entrena baseline y bosque, y registra las corridas en MLflow
+make prefect-server # inicia Prefect en http://127.0.0.1:4200
+make flow           # pipeline de entrenamiento orquestado con Prefect
+make serve-flow     # deja servido el schedule mensual de entrenamiento en Prefect
+make serve          # inicia la API de predicción en http://127.0.0.1:8000
+make promote-check  # evalúa candidate contra el gate, sin mover el alias champion
+make drift          # reporte de drift entre referencia y producción simulada
+make clean          # borra caches y artefactos temporales
 ```
 
-Para entrenar, abre dos terminales Git Bash: en la primera ejecuta `make mlflow`
-y en la segunda `make train`. MLflow registra el hash del dataset, las
-particiones, el commit, parámetros, métricas globales y por estación, además del
-modelo con su firma de entrada.
+## Los datos
 
-## Créditos
+**Beijing Multi-Site Air Quality Data** — UCI Machine Learning Repository,
+dataset 501. 420.768 filas × 18 columnas, horario, de 2013-03-01 a 2017-02-28,
+12 estaciones de monitoreo. Licencia CC BY 4.0.
 
-Basado en el repositorio [`MLOps-Course`](https://github.com/dpalacioj/MLOps-Course)
-para estructura, convenciones y configuración.
+```bash
+make data
+```
 
-## Contribuir
+**El dataset no se versiona.** Lo que sí va al repositorio es
+`data/raw/metadata.json`, con la URL, el SHA-256, el tamaño y la licencia. Cada
+integrante corre la descarga en su máquina y compara el hash: si coincide,
+todos trabajan con exactamente el mismo dato.
 
-Pendiente de definir las convenciones de contribución.
+Las particiones son **rangos de fechas fijos** declarados en `config.py`, nunca
+`datetime.now()`:
+
+| Partición | Rango | Uso |
+|---|---|---|
+| `train` | 2013-03-01 a 2015-06-30 | entrenamiento |
+| `valid` | 2015-07-01 a 2015-12-31 | selección de hiperparámetros |
+| `test` | 2016-01-01 a 2016-06-30 | holdout fijo, juez del gate |
+| `produccion` | 2016-07-01 a 2017-02-28 | producción simulada para monitoreo |
+
+Esquema, unidades por columna, conteo y naturaleza de los nulos, sesgos y
+limitaciones están en [`docs/dataset-card.md`](docs/dataset-card.md).
+
+## Pipeline de entrenamiento
+
+El entrenamiento está orquestado con Prefect. El flow **no reimplementa** la
+lógica de ML: llama a `models/train.py` y a `data/`. Duplicarla produciría dos
+versiones que se desincronizan.
+
+### Cómo se ejecuta
+
+Necesita dos servicios corriendo, cada uno en su propia terminal:
+
+```bash
+uv run prefect server start   # terminal 1 — UI en http://127.0.0.1:4200
+make mlflow                   # terminal 2 — UI en http://127.0.0.1:5001
+make flow                     # terminal 3 — el pipeline
+```
+
+### Las seis tasks
+
+```
+extraer ──► validar ──► entrenar ──► evaluar ──┬──► registrar_candidato
+                                               └──► publicar_reporte
+```
+
+| Task | Qué hace | Detalle |
+|---|---|---|
+| `extraer` | Descarga el ZIP y registra su hash | `retries=3` con backoff `[10, 30, 60]` |
+| `validar` | Corre el contrato sobre el crudo | `cache_key_fn=task_input_hash` |
+| `entrenar` | Llama a `entrenar_y_registrar()` | Registra en MLflow |
+| `evaluar` | Elige el mejor candidato por RMSE | |
+| `registrar_candidato` | Pone el alias `@candidate` | **No toca `@champion`** |
+| `publicar_reporte` | Tabla de métricas como artifact | Visible en la UI |
+
+El orden **no está escrito a mano**: sale de los datos que cada task le pasa a la
+siguiente. Por eso `validar` recibe la ruta que devuelve `extraer` aunque no la
+use.
+
+### El flow registra, no promueve
+
+`registrar_candidato` marca la versión nueva con el alias `@candidate` y el tag
+`validation_status=pending`. **Nunca mueve `@champion`.** La promoción es
+responsabilidad del gate, no del entrenamiento: un modelo no llega a producción
+por el hecho de que el entrenamiento no lanzó excepciones.
+
+### Por qué el backoff es `[10, 30, 60]` y no `[2, 2, 2]`
+
+Reintentar cada dos segundos contra un servicio caído solo le agrega carga. La
+lista da control explícito por intento y da tiempo real a que el proveedor se
+recupere.
+
+### Caching: medición y diagnóstico
+
+Dos ejecuciones consecutivas, cronometradas:
+
+| Task | 1ª (caché frío) | 2ª (caché caliente) | Estado |
+|---|---:|---:|---|
+| `extraer` | 0,26 s | 0,27 s | Completed |
+| **`validar`** | **0,765 s** | **0,009 s** | **Cached** |
+| `entrenar` | 23,7 s | 32,2 s | Completed |
+| **Total** | **30,1 s** | **38,2 s** | |
+
+**El caching funciona: `validar` es 85 veces más rápido en la segunda corrida**, y
+Prefect lo reporta explícitamente como `Cached(type=COMPLETED)`.
+
+**Pero el tiempo total no baja, y esa es la observación importante.** El ahorro es
+de 0,76 s; `entrenar` varió 8,5 s entre las dos corridas por su cuenta. La
+variabilidad de una task grande se come el ahorro de una pequeña.
+
+`entrenar` es el 90-95 % del pipeline, y parte de ese tiempo es MLflow exportando
+las 227 dependencias del proyecto para guardarlas junto al modelo. **Ninguna de
+las dos cosas se debe cachear**: cachear el entrenamiento significa "no vuelvas a
+entrenar", y la exportación de dependencias es la trazabilidad que hace
+reproducible el artefacto.
+
+**Pendiente declarado:** la preparación de datos ocurre dentro de `entrenar`
+(en `data/loaders.py`), no como task independiente. Sacarla haría el ahorro
+visible en el total.
+
+### Nota de portabilidad
+
+`make flow` fuerza `PYTHONUTF8=1`. MLflow imprime emojis en sus mensajes, y
+Windows usa `cp1252` cuando la salida no va a una consola — lo que hacía fallar
+el pipeline con `UnicodeEncodeError` al redirigir la salida. **Habría roto el CI**,
+que captura la salida igual.
 
 ## Monitoreo de drift
 
@@ -102,6 +216,9 @@ Produce dos cosas:
 Y termina con un **exit code** utilizable en CI: `0` sin drift, `1` con drift,
 `2` si falla la infraestructura.
 
+> `make drift` **termina con error cuando detecta drift**. Es el comportamiento
+> esperado: es lo que permite usarlo como gate en CI. No envolverlo en `|| true`.
+
 ### Cómo se decide
 
 No basta con que el cambio sea estadísticamente significativo: con 245.376 filas
@@ -114,6 +231,88 @@ ventanas temporales distintas siempre tienen mezcla distinta de meses. `hora`,
 `dia_semana` y `station` sí se conservan como control — que den efecto ~0
 verifica que la partición está bien armada.
 
-Los umbrales y su justificación están en
-[`docs/politica-de-reentrenamiento.md`](docs/politica-de-reentrenamiento.md),
-junto con el análisis que separa la estacionalidad del cambio estructural real.
+### Qué encontramos
+
+36 % de las columnas driftean, pero **no todo es del mismo tipo**. Comparando el
+mismo mes en años distintos (enero, con la estacionalidad constante):
+
+| | 2014 | 2015 | 2016 | 2017 | Patrón |
+|---|---:|---:|---:|---:|---|
+| SO2 | 53,4 | 34,3 | 19,9 | 18,5 | ↓ monótono, **−65 %** |
+| O3 | 22,5 | 23,6 | 30,2 | 33,9 | ↑ monótono, **+51 %** |
+| PM2.5 | 98,0 | 96,4 | 66,9 | 113,3 | sin tendencia |
+
+SO2 y O3 tienen **tendencia estructural**. PM2.5, PM10, CO y NO2 se mueven al
+unísono sin dirección: variabilidad meteorológica interanual. PRES, TEMP y `wd`
+driftean por estacionalidad esperada.
+
+Los umbrales, su justificación y el análisis completo están en
+[`docs/politica-de-reentrenamiento.md`](docs/politica-de-reentrenamiento.md).
+
+## Documentación
+
+| Documento | Qué contiene |
+|---|---|
+| [`docs/dataset-card.md`](docs/dataset-card.md) | Procedencia, licencia, esquema, nulos, particiones, sesgos |
+| [`docs/model-card.md`](docs/model-card.md) | El modelo, sus métricas y sus límites |
+| [`docs/politica-de-reentrenamiento.md`](docs/politica-de-reentrenamiento.md) | Trigger, umbrales, rollback, alertas |
+| [`docs/adr/`](docs/adr/) | Registro de decisiones de arquitectura |
+
+Para la sesión de orquestación usa tres terminales: `make mlflow`,
+`make prefect-server` y `make flow`. El flow reintenta solo la descarga, valida
+los datos antes de entrenar y registra el bosque como `candidate` en MLflow. El
+schedule mensual de `make serve-flow` despierta el flow, pero este solo
+reentrena si cambió el hash del dataset; no promueve modelos automáticamente.
+
+## Deployment: API y Docker
+
+La API se ejecuta con `uv run uvicorn BeijingAir.api.main:app --host 127.0.0.1 --port 8000`
+(o `make serve` donde `make` esté disponible). Abre
+`http://127.0.0.1:8000/docs` para probarla. Su contrato recibe una lectura
+cruda: la API deriva las variables de calendario mediante el mismo código que
+el entrenamiento y no acepta columnas desconocidas.
+
+El servicio busca exclusivamente `models:/beijing-air-pm25@champion` en MLflow.
+Como la promoción aún corresponde a la siguiente etapa, es normal que al inicio
+`GET /health` responda `degradado` y `POST /predict` responda 503: es una
+protección para no entregar el alias `candidate` a usuarios. Para usar otro
+Registry o URI se configura `MODELO_URI` antes de arrancar.
+
+```bash
+# Requiere Docker Desktop encendido. No incluye datos ni modelos en la imagen.
+docker build -t beijing-air-api .
+docker run --rm -p 8000:8000 \
+  -e MLFLOW_TRACKING_URI=http://host.docker.internal:5001 \
+  beijing-air-api
+```
+
+Consulta los detalles y la decisión en
+[`docs/adr/0003-serving-api-y-registry.md`](docs/adr/0003-serving-api-y-registry.md).
+
+## Promoción controlada del modelo
+
+El flow deja un modelo como `candidate`; nunca toca `champion`. Cada corrida
+actualizada mide además `mae_test` y `r2_test` en la partición temporal que no
+se usa para elegir el modelo. El gate compara dichas métricas con límites
+explícitos y con el champion actual. Para revisar el resultado localmente, sin
+mover ningún alias, inicia MLflow y ejecuta:
+
+```bash
+uv run python -m BeijingAir.models.promote --dry-run
+```
+
+La mutación real se hace solo desde el workflow manual **Promover modelo** de
+GitHub Actions, en el entorno `production`. Antes de usarlo, el administrador
+del repositorio debe crear allí el secreto `MLFLOW_TRACKING_URI` con una URL de
+un MLflow Registry remoto; `http://127.0.0.1:5001` es local y GitHub no puede
+alcanzarlo. Los criterios y la decisión están documentados en
+[`docs/adr/0004-gate-de-promocion.md`](docs/adr/0004-gate-de-promocion.md).
+
+## Créditos
+
+Basado en el repositorio [`MLOps-Course`](https://github.com/dpalacioj/MLOps-Course)
+para estructura, convenciones y configuración.
+
+## Contribuir
+
+Pendiente de definir las convenciones de contribución.
