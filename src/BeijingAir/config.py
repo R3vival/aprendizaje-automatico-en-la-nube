@@ -15,8 +15,6 @@ from typing import Final
 
 __all__ = [
     "ALFA_DRIFT",
-    "ALIAS_CANDIDATO",
-    "ALIAS_PRODUCCION",
     "API_PORT",
     "ARCHIVO_ZIP",
     "COL_TIEMPO",
@@ -175,12 +173,6 @@ MAX_EMPEORAMIENTO_MAE: Final[float] = float(os.getenv("MAX_EMPEORAMIENTO_MAE", "
 PREFECT_PORT: Final[int] = int(os.getenv("PREFECT_PORT", "4200"))
 PREFECT_SCHEDULE_CRON: Final[str] = "0 3 1 * *"
 PREFECT_TIMEZONE: Final[str] = "America/Bogota"
-
-#: Alias de produccion. Reemplazan a los stages, deprecados desde MLflow 2.9.
-#: Un alias es una referencia mutable a "la version que sirve"; el rollback es
-#: moverlo de vuelta, y eso es una escritura de metadatos.
-ALIAS_PRODUCCION: Final[str] = "champion"
-ALIAS_CANDIDATO: Final[str] = "candidate"
 #: Tag que el gate escribe ANTES de mover el alias, para dejar registrado
 #: por que se promovio (o por que no).
 TAG_VALIDACION: Final[str] = "validation_status"
