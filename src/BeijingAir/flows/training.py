@@ -1,106 +1,161 @@
-"""Pipeline de entrenamiento orquestado con Prefect.
+"""Flow de entrenamiento reproducible para BeijingAir.
 
-Este modulo NO implementa logica de ML: la orquesta. El entrenamiento vive en
-`models/train.py` y la preparacion de datos en `data/loaders.py`. Duplicar esa
-logica aqui produciria dos versiones que se desincronizan.
+Prefect responde cuando y como corrio el pipeline; MLflow conserva los
+parametros, las metricas y el modelo que produjo cada corrida. Este modulo NO
+implementa logica de ML: la orquesta. El entrenamiento vive en
+``models/train.py`` y la preparacion de datos en ``data/loaders.py``.
 
-Tres garantias que aporta la orquestacion:
-
-1. **Resiliencia**: `retries` con backoff en la unica task que habla con la red.
-2. **Trazabilidad**: cada corrida queda en la UI, con quien la lanzo y cuanto
-   tardo cada paso.
-3. **Separacion de responsabilidades**: el flow registra un CANDIDATO y NO lo
-   promueve. La promocion es del gate.
+Este flow registra un CANDIDATO y NO lo promueve: la promocion la decide el
+gate de CI/CD (``models/promote.py``). Para decidir si reentrenar usa el hash
+del dataset (llegada de datos), no una frecuencia arbitraria.
 """
 
 from __future__ import annotations
 
-from dataclasses import asdict, is_dataclass
-from datetime import timedelta
-from typing import Any
+import argparse
+import json
+from collections.abc import Sequence
+from dataclasses import asdict, dataclass
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
+import pandas as pd
 from prefect import flow, get_run_logger, task
 from prefect.artifacts import create_table_artifact
-from prefect.tasks import task_input_hash
+from prefect.cache_policies import INPUTS
+from prefect.runtime import flow_run
+from prefect.schedules import Cron
 
 from BeijingAir.config import (
     ALIAS_CANDIDATO,
+    ESTADO_ENTRENAMIENTO,
+    FILAS_POR_PARTICION,
     MODELO_REGISTRADO,
+    PARTICION_TEST,
+    PARTICION_VALID,
     PARTICIONES_TRAIN,
+    PREFECT_SCHEDULE_CRON,
+    PREFECT_TIMEZONE,
     TAG_VALIDACION,
 )
+from BeijingAir.data.loaders import asegurar_crudo, preparar_particion, preparar_particiones
+from BeijingAir.models.train import entrenar_y_registrar, hash_dataset
+
+MetricasModelo = dict[str, float | dict[str, float]]
 
 
-def _a_dict(obj: Any) -> dict[str, Any]:
-    """Convierte un ResultadoEvaluacion a diccionario, sea dataclass o no."""
-    if is_dataclass(obj) and not isinstance(obj, type):
-        return asdict(obj)
-    return dict(vars(obj))
+@dataclass(frozen=True)
+class EstadoEntrenamiento:
+    """Huella de la ultima corrida exitosa, persistida fuera de Git."""
+
+    dataset_sha256: str
+    ejecutado_en_utc: str
+
+
+@dataclass(frozen=True)
+class ResultadoFlujo:
+    """Resumen serializable de una ejecucion del flujo."""
+
+    ejecutado: bool
+    dataset_sha256: str
+    filas_validadas: dict[str, int]
+    resultados: dict[str, MetricasModelo]
+
+
+def cargar_estado(ruta: Path = ESTADO_ENTRENAMIENTO) -> EstadoEntrenamiento | None:
+    """Lee el estado local; no tenerlo implica que aun no se ha entrenado."""
+    if not ruta.exists():
+        return None
+
+    contenido: object = json.loads(ruta.read_text(encoding="utf-8"))
+    if not isinstance(contenido, dict):
+        return None
+    dataset_sha256 = contenido.get("dataset_sha256")
+    ejecutado_en_utc = contenido.get("ejecutado_en_utc")
+    if not isinstance(dataset_sha256, str) or not isinstance(ejecutado_en_utc, str):
+        return None
+    return EstadoEntrenamiento(dataset_sha256, ejecutado_en_utc)
+
+
+def guardar_estado(estado: EstadoEntrenamiento, ruta: Path = ESTADO_ENTRENAMIENTO) -> None:
+    """Persiste la huella solo despues de que MLflow registro el candidato."""
+    ruta.parent.mkdir(parents=True, exist_ok=True)
+    ruta.write_text(
+        json.dumps(asdict(estado), ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
+def debe_reentrenar(
+    dataset_sha256: str,
+    estado_anterior: EstadoEntrenamiento | None,
+    *,
+    forzar: bool = False,
+) -> bool:
+    """Decide por llegada de datos, no por una frecuencia arbitraria."""
+    return forzar or estado_anterior is None or estado_anterior.dataset_sha256 != dataset_sha256
+
+
+@task(name="asegurar-origen", retries=2, retry_delay_seconds=[5, 15])
+def asegurar_origen() -> str:
+    """Descarga el origen si falta; los reintentos son para fallos de red."""
+    asegurar_crudo()
+    huella = hash_dataset()
+    if huella == "no-disponible":
+        raise RuntimeError("No se encontro metadata.json con el hash del dataset.")
+    return huella
 
 
 @task(
-    name="extraer",
-    description="Descarga el ZIP de UCI y registra su hash en metadata.json.",
-    retries=3,
-    retry_delay_seconds=[10, 30, 60],
+    name="preparar-y-validar-particiones",
+    cache_policy=INPUTS,
+    cache_expiration=timedelta(days=1),
+    persist_result=True,
 )
-def extraer() -> str:
-    """Unica task que habla con la red, y por eso la unica con reintentos.
-
-    El backoff es [10, 30, 60] y no [2, 2, 2] a proposito: reintentar cada dos
-    segundos contra un servidor caido solo le agrega carga. La lista da control
-    explicito por intento.
-    """
-    from BeijingAir.data.descarga import descargar
-    from BeijingAir.data.descarga import extraer as descomprimir
-
-    ruta = descargar()
-    descomprimir(ruta)
-    get_run_logger().info("dataset listo en %s", ruta)
-    return str(ruta)
+def preparar_datos(
+    dataset_sha256: str, filas: int | None
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Prepara train, valid y test una vez; el cache depende del hash y muestra."""
+    _ = dataset_sha256
+    train = preparar_particiones(PARTICIONES_TRAIN, filas=filas)
+    valid = preparar_particion(PARTICION_VALID, filas=filas)
+    test = preparar_particion(PARTICION_TEST, filas=filas)
+    return train, valid, test
 
 
-@task(
-    name="validar",
-    description="Corre el contrato sobre los datos crudos.",
-    cache_key_fn=task_input_hash,
-    cache_expiration=timedelta(hours=1),
-)
-def validar(_ruta: str) -> dict[str, int]:
-    """Falla temprano si el proveedor cambio el esquema.
-
-    Recibe `_ruta` sin usarla: es lo que le dice a Prefect que esta task
-    depende de `extraer`. Asi el grafo sale de los datos, no de un orden
-    escrito a mano.
-    """
-    from BeijingAir.data.descarga import cargar_crudo
-
-    df = cargar_crudo()
-    filas, columnas = df.shape
-    get_run_logger().info("crudo validado: %d filas x %d columnas", filas, columnas)
-    return {"filas": int(filas), "columnas": int(columnas)}
-
-
-@task(name="entrenar", description="Entrena los candidatos y los registra en MLflow.")
-def entrenar(_stats: dict[str, int]) -> dict[str, dict[str, Any]]:
-    """Llama al entrenamiento que ya existe. No reimplementa nada."""
-    from BeijingAir.models.train import entrenar_y_registrar
-
-    resultados = entrenar_y_registrar(registrar=True)
-    get_run_logger().info("modelos entrenados: %s", ", ".join(resultados))
-    return {nombre: _a_dict(res) for nombre, res in resultados.items()}
+@task(name="entrenar-y-registrar")
+def ejecutar_entrenamiento(
+    datos_train: pd.DataFrame,
+    datos_valid: pd.DataFrame,
+    datos_test: pd.DataFrame,
+    filas: int | None,
+    n_estimators: int,
+    prefect_flow_run_id: str,
+) -> dict[str, MetricasModelo]:
+    """Entrena y deja el run de Prefect como tag en las corridas de MLflow."""
+    resultados = entrenar_y_registrar(
+        filas=filas,
+        n_estimators=n_estimators,
+        registrar=True,
+        tags_adicionales={"prefect_flow_run_id": prefect_flow_run_id},
+        datos_train=datos_train,
+        datos_valid=datos_valid,
+        datos_test=datos_test,
+    )
+    return {nombre: evaluacion.como_dict() for nombre, evaluacion in resultados.items()}
 
 
 @task(name="evaluar", description="Elige el mejor candidato segun la metrica.")
-def evaluar(resultados: dict[str, dict[str, Any]]) -> tuple[str, dict[str, Any]]:
-    """Selecciona el mejor por RMSE. Si tu metrica es otra, cambia la clave."""
+def evaluar(resultados: dict[str, MetricasModelo]) -> tuple[str, MetricasModelo]:
+    """Selecciona el candidato con menor RMSE de validacion."""
     logger = get_run_logger()
 
-    def _rmse(item: tuple[str, dict[str, Any]]) -> float:
+    def _rmse(item: tuple[str, MetricasModelo]) -> float:
         metricas = item[1]
-        for clave in ("rmse", "RMSE", "rmse_valid"):
-            if clave in metricas:
-                return float(metricas[clave])
+        for clave in ("rmse_valid", "rmse", "RMSE"):
+            valor = metricas.get(clave)
+            if isinstance(valor, float):
+                return valor
         raise KeyError(f"No encuentro el RMSE en {list(metricas)}")
 
     nombre, metricas = min(resultados.items(), key=_rmse)
@@ -108,15 +163,13 @@ def evaluar(resultados: dict[str, dict[str, Any]]) -> tuple[str, dict[str, Any]]
     return nombre, metricas
 
 
-@task(
-    name="registrar_candidato",
-    description="Marca la ultima version como @candidate. NO la promueve.",
-)
-def registrar_candidato(mejor: tuple[str, dict[str, Any]]) -> str:
-    """Pone el alias @candidate y el tag de validacion pendiente.
+@task(name="marcar-candidato", description="Marca la version candidata con el tag de validacion.")
+def marcar_candidato() -> str:
+    """Deja el tag de validacion ``pending`` en la ultima version registrada.
 
-    NO toca @champion. Un modelo no llega a produccion por el hecho de que el
-    entrenamiento no lanzo excepciones: esa decision es del gate de promocion.
+    El alias ``@candidate`` ya lo asigna ``models/train.py`` al registrar el
+    bosque. Esta task agrega el tag que el gate usa para auditar por que no se
+    promovio aun; no mueve ``@champion``.
     """
     from mlflow import MlflowClient
 
@@ -127,14 +180,13 @@ def registrar_candidato(mejor: tuple[str, dict[str, Any]]) -> str:
         raise RuntimeError(f"No hay versiones registradas de {MODELO_REGISTRADO}")
 
     ultima = max(versiones, key=lambda v: int(v.version))
-    cliente.set_registered_model_alias(MODELO_REGISTRADO, ALIAS_CANDIDATO, ultima.version)
     cliente.set_model_version_tag(MODELO_REGISTRADO, ultima.version, TAG_VALIDACION, "pending")
     logger.info("version %s marcada como @%s (champion sin tocar)", ultima.version, ALIAS_CANDIDATO)
     return str(ultima.version)
 
 
-@task(name="publicar_reporte", description="Publica la tabla de metricas.")
-def publicar_reporte(resultados: dict[str, dict[str, Any]]) -> None:
+@task(name="publicar-reporte", description="Publica la tabla de metricas.")
+def publicar_reporte(resultados: dict[str, MetricasModelo]) -> None:
     """Deja la tabla de metricas junto a la corrida, en la UI de Prefect."""
     filas = [{"modelo": nombre, **metricas} for nombre, metricas in resultados.items()]
     create_table_artifact(
@@ -144,21 +196,93 @@ def publicar_reporte(resultados: dict[str, dict[str, Any]]) -> None:
     )
 
 
-@flow(name="entrenamiento-beijing", log_prints=True)
-def entrenamiento_flow() -> None:
-    """Pipeline completo: extraer, validar, entrenar, evaluar y registrar."""
+@task(name="guardar-estado")
+def persistir_estado(dataset_sha256: str) -> None:
+    """Marca como procesada esta version del dataset tras una corrida exitosa."""
+    guardar_estado(
+        EstadoEntrenamiento(
+            dataset_sha256=dataset_sha256,
+            ejecutado_en_utc=datetime.now(UTC).isoformat(),
+        )
+    )
+
+
+@flow(name="entrenamiento-beijing-pm25", log_prints=True)
+def flujo_entrenamiento(
+    *,
+    filas: int | None = FILAS_POR_PARTICION,
+    n_estimators: int = 300,
+    forzar: bool = False,
+) -> ResultadoFlujo:
+    """Orquesta extraer -> validar -> preparar -> entrenar -> evaluar -> registrar.
+
+    El schedule mensual despierta el flow, pero este solo reentrena si la huella
+    del dataset es nueva. ``--forzar`` existe para probar cambios de codigo o
+    hiperparametros de manera intencional.
+    """
     logger = get_run_logger()
-    logger.info("particiones de entrenamiento: %s", ", ".join(str(p) for p in PARTICIONES_TRAIN))
+    dataset_sha256 = asegurar_origen()
+    estado_anterior = cargar_estado()
+    if not debe_reentrenar(dataset_sha256, estado_anterior, forzar=forzar):
+        logger.info("No hay datos nuevos: se omite el reentrenamiento.")
+        return ResultadoFlujo(False, dataset_sha256, {}, {})
 
-    ruta = extraer()
-    stats = validar(ruta)
-    resultados = entrenar(stats)
-    mejor = evaluar(resultados)
-    version = registrar_candidato(mejor)
+    datos_train, datos_valid, datos_test = preparar_datos(dataset_sha256, filas)
+    filas_validadas = {
+        "train": len(datos_train),
+        "valid": len(datos_valid),
+        "test": len(datos_test),
+    }
+    resultados = ejecutar_entrenamiento(
+        datos_train,
+        datos_valid,
+        datos_test,
+        filas,
+        n_estimators,
+        str(flow_run.id),
+    )
+    evaluar(resultados)
     publicar_reporte(resultados)
+    marcar_candidato()
+    persistir_estado(dataset_sha256)
+    logger.info("Candidato registrado; la promocion la decide CI/CD, no este flow.")
+    return ResultadoFlujo(True, dataset_sha256, filas_validadas, resultados)
 
-    logger.info("listo. Version %s registrada como @%s, sin promover.", version, ALIAS_CANDIDATO)
+
+def servir_flujo() -> None:
+    """Sirve el schedule mensual en Prefect; esta llamada queda en primer plano."""
+    flujo_entrenamiento.serve(
+        name="entrenamiento-beijing-mensual",
+        schedules=[Cron(PREFECT_SCHEDULE_CRON, timezone=PREFECT_TIMEZONE)],
+        parameters={"filas": FILAS_POR_PARTICION, "n_estimators": 300, "forzar": False},
+    )
+
+
+def _argumentos(argumentos: Sequence[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Orquesta el entrenamiento de PM2.5 con Prefect.")
+    parser.add_argument("--filas", type=int, default=FILAS_POR_PARTICION)
+    parser.add_argument("--n-estimators", type=int, default=300)
+    parser.add_argument("--forzar", action="store_true")
+    parser.add_argument("--serve", action="store_true", help="Deja servido el schedule mensual.")
+    return parser.parse_args(argumentos)
+
+
+def main(argumentos: Sequence[str] | None = None) -> None:
+    """Punto de entrada de ``python -m BeijingAir.flows.training``."""
+    opciones = _argumentos(argumentos)
+    if opciones.serve:
+        servir_flujo()
+        return
+
+    filas = None if opciones.filas == 0 else opciones.filas
+    resultado = flujo_entrenamiento(
+        filas=filas,
+        n_estimators=opciones.n_estimators,
+        forzar=opciones.forzar,
+    )
+    estado = "ejecutado" if resultado.ejecutado else "omitido: sin datos nuevos"
+    print(f"Flow {estado}. Dataset: {resultado.dataset_sha256}")
 
 
 if __name__ == "__main__":
-    entrenamiento_flow()
+    main()

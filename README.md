@@ -49,7 +49,7 @@ aprendizaje-automatico-en-la-nube/
 │   ├── config.py              las decisiones en un solo lugar
 │   ├── data/                  descargar, cargar y VALIDAR datos
 │   ├── features/              construir variables
-│   ├── models/                entrenar y evaluar
+│   ├── models/                entrenar, evaluar y promover
 │   ├── flows/                 el pipeline orquestado con Prefect
 │   ├── api/                   servir el modelo
 │   └── monitoring/            vigilarlo
@@ -76,11 +76,15 @@ make test          # corre todos los tests
 make test-fast     # corre solo los tests sin red ni servicios
 make check         # lint + tipos + tests, en local
 make validate-data # descarga y valida las particiones reales contra el contrato
-make mlflow        # inicia MLflow en http://127.0.0.1:5001 (dejar esta terminal abierta)
-make train         # entrena baseline y bosque, y registra las corridas en MLflow
-make flow          # pipeline de entrenamiento orquestado con Prefect
-make drift         # reporte de drift entre referencia y producción simulada
-make clean         # borra caches y artefactos temporales
+make mlflow         # inicia MLflow en http://127.0.0.1:5001 (dejar esta terminal abierta)
+make train          # entrena baseline y bosque, y registra las corridas en MLflow
+make prefect-server # inicia Prefect en http://127.0.0.1:4200
+make flow           # pipeline de entrenamiento orquestado con Prefect
+make serve-flow     # deja servido el schedule mensual de entrenamiento en Prefect
+make serve          # inicia la API de predicción en http://127.0.0.1:8000
+make promote-check  # evalúa candidate contra el gate, sin mover el alias champion
+make drift          # reporte de drift entre referencia y producción simulada
+make clean          # borra caches y artefactos temporales
 ```
 
 ## Los datos
@@ -253,6 +257,56 @@ Los umbrales, su justificación y el análisis completo están en
 | [`docs/model-card.md`](docs/model-card.md) | El modelo, sus métricas y sus límites |
 | [`docs/politica-de-reentrenamiento.md`](docs/politica-de-reentrenamiento.md) | Trigger, umbrales, rollback, alertas |
 | [`docs/adr/`](docs/adr/) | Registro de decisiones de arquitectura |
+
+Para la sesión de orquestación usa tres terminales: `make mlflow`,
+`make prefect-server` y `make flow`. El flow reintenta solo la descarga, valida
+los datos antes de entrenar y registra el bosque como `candidate` en MLflow. El
+schedule mensual de `make serve-flow` despierta el flow, pero este solo
+reentrena si cambió el hash del dataset; no promueve modelos automáticamente.
+
+## Deployment: API y Docker
+
+La API se ejecuta con `uv run uvicorn BeijingAir.api.main:app --host 127.0.0.1 --port 8000`
+(o `make serve` donde `make` esté disponible). Abre
+`http://127.0.0.1:8000/docs` para probarla. Su contrato recibe una lectura
+cruda: la API deriva las variables de calendario mediante el mismo código que
+el entrenamiento y no acepta columnas desconocidas.
+
+El servicio busca exclusivamente `models:/beijing-air-pm25@champion` en MLflow.
+Como la promoción aún corresponde a la siguiente etapa, es normal que al inicio
+`GET /health` responda `degradado` y `POST /predict` responda 503: es una
+protección para no entregar el alias `candidate` a usuarios. Para usar otro
+Registry o URI se configura `MODELO_URI` antes de arrancar.
+
+```bash
+# Requiere Docker Desktop encendido. No incluye datos ni modelos en la imagen.
+docker build -t beijing-air-api .
+docker run --rm -p 8000:8000 \
+  -e MLFLOW_TRACKING_URI=http://host.docker.internal:5001 \
+  beijing-air-api
+```
+
+Consulta los detalles y la decisión en
+[`docs/adr/0003-serving-api-y-registry.md`](docs/adr/0003-serving-api-y-registry.md).
+
+## Promoción controlada del modelo
+
+El flow deja un modelo como `candidate`; nunca toca `champion`. Cada corrida
+actualizada mide además `mae_test` y `r2_test` en la partición temporal que no
+se usa para elegir el modelo. El gate compara dichas métricas con límites
+explícitos y con el champion actual. Para revisar el resultado localmente, sin
+mover ningún alias, inicia MLflow y ejecuta:
+
+```bash
+uv run python -m BeijingAir.models.promote --dry-run
+```
+
+La mutación real se hace solo desde el workflow manual **Promover modelo** de
+GitHub Actions, en el entorno `production`. Antes de usarlo, el administrador
+del repositorio debe crear allí el secreto `MLFLOW_TRACKING_URI` con una URL de
+un MLflow Registry remoto; `http://127.0.0.1:5001` es local y GitHub no puede
+alcanzarlo. Los criterios y la decisión están documentados en
+[`docs/adr/0004-gate-de-promocion.md`](docs/adr/0004-gate-de-promocion.md).
 
 ## Créditos
 

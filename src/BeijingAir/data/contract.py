@@ -191,9 +191,7 @@ class RegistrosProcesados(pa.DataFrameModel):
 
     station: Series[str] = pa.Field(nullable=False)
     wd: Series[str] = pa.Field(nullable=False, isin=set(RUMBOS_VALIDOS) | {"desconocido"})
-    temporada: Series[str] = pa.Field(
-        nullable=False, isin={"invierno", "primavera", "verano", "otonio"}
-    )
+    temporada: Series[str] = pa.Field(nullable=False, isin=set(fc.TEMPORADAS_VALIDAS))
     # Numericas ya imputadas: sin nulos y dentro de rango.
     PM10: Series[float] = pa.Field(ge=PM_MIN, le=PM_MAX, nullable=False)
     SO2: Series[float] = pa.Field(ge=PM_MIN, le=SO2_MAX, nullable=False)
