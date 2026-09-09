@@ -13,7 +13,7 @@ SHELL := /bin/bash
 UV := uv
 PY := $(UV) run
 
-.PHONY: help setup data test test-fast lint format typecheck check validate-data mlflow prefect-server train flow serve-flow serve promote-check drift flow clean
+.PHONY: help setup data smoke test test-fast lint format typecheck check validate-data mlflow prefect-server train flow serve-flow serve promote-check drift flow clean
 
 # =============================================================================
 help: ## Muestra los targets disponibles
@@ -35,11 +35,15 @@ setup: ## Instala dependencias y los hooks de pre-commit
 	  || true
 	$(PY) pre-commit install --install-hooks
 	$(MAKE) data
+	$(MAKE) smoke
 	@echo ""
 	@echo "Listo."
 
 data: ## Descarga y extrae el dataset Beijing
 	$(PY) python -m BeijingAir.data.descarga
+
+smoke: ## Verifica que el entorno esta listo para entrenar y servir
+	$(PY) python scripts/smoke_test.py
 # =============================================================================
 # Calidad — el CI corre exactamente esto
 # =============================================================================
