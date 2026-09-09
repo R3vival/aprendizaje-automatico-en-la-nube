@@ -169,7 +169,7 @@ MAX_EMPEORAMIENTO_MAE: Final[float] = float(os.getenv("MAX_EMPEORAMIENTO_MAE", "
 # =============================================================================
 # Orquestacion
 # =============================================================================
-#: Prefect se usa localmente durante el curso; la URI se configura por entorno.
+#: Prefect se usa localmente; la URI se configura por entorno.
 PREFECT_PORT: Final[int] = int(os.getenv("PREFECT_PORT", "4200"))
 PREFECT_SCHEDULE_CRON: Final[str] = "0 3 1 * *"
 PREFECT_TIMEZONE: Final[str] = "America/Bogota"
