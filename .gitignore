@@ -111,7 +111,6 @@ drift_report*.html
 # --- IDE / OS ---
 # `.vscode/*` y no `.vscode/`: una regla que excluye el DIRECTORIO no admite
 # negaciones de archivos dentro de el (git no entra a un directorio excluido).
-# Es el mismo bug que tenia `models/` con src/taxi/models/.
 .vscode/*
 # ...pero settings.json y extensions.json SI van al repositorio.
 !.vscode/settings.json

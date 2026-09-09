@@ -188,7 +188,6 @@ def asegurar_directorios() -> None:
 # Monitoreo de drift
 # =============================================================================
 #: Fraccion de columnas con drift que dispara la alerta.
-#: TODO: justificar este numero en docs/politica-de-reentrenamiento.md.
 UMBRAL_DRIFT_COLUMNAS: Final[float] = 0.30
 
 #: Nivel de significancia de los tests por columna. Ojo: con 420.768 filas TODO

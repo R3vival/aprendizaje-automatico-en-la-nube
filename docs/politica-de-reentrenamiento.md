@@ -3,9 +3,6 @@
 > Una página. Es el documento que cierra el ciclo: el monitoreo detecta, esta
 > política decide y el gate de promoción ejecuta. Sin ella, el reentrenamiento es
 > algo que alguien hace cuando se acuerda.
->
-> TODO(estudiante) 32: reemplaza cada TODO. El criterio de calificación es si un
-> compañero podría **operar** tu sistema leyendo solo este archivo.
 
 ## 1. Trigger: qué dispara un reentrenamiento
 
@@ -20,7 +17,7 @@
 
 **Por qué:** Beijing se descarga como un solo archivo con particiones temporales fijas; reentrenar por cron con el mismo dato no aporta señal. Detectar un SHA-256 distinto en data/raw/metadata.json es la señal honesta de "hay dato nuevo".
 
-**Frecuencia máxima:** una vez al día (cron `0 3 1 * *`), nunca cada pocos minutos.
+**Frecuencia máxima:** una vez al mes (cron `0 3 1 * *`), nunca cada pocos minutos.
 
 Un anti-patrón concreto que hay que evitar: `cron="*/2 * * * *"` reentrenando el
 modelo completo. Cuesta dinero, no aporta señal y enseña el hábito contrario al
@@ -64,7 +61,7 @@ tres semanas después, "por qué no se promovió aquel modelo" es una pregunta r
 
 ## 5. Rollback
 
-Rollback de modelo: mover el alias `@champion` a la versión anterior (ver códigoabajo). Es una escritura de metadatos y no requiere reentrenar ni redeploy.
+Rollback de modelo: mover el alias `@champion` a la versión anterior (ver código abajo). Es una escritura de metadatos y no requiere reentrenar ni redeploy.
 
 Volver atrás es mover el alias `@champion` a la versión anterior:
 
