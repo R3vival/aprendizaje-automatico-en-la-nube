@@ -6,7 +6,11 @@ import numpy as np
 import pandas as pd
 from fastapi.testclient import TestClient
 
-from BeijingAir.api.main import DETALLE_MODELO_NO_DISPONIBLE, crear_app
+from BeijingAir.api.main import (
+    DETALLE_ERROR_INTERNO,
+    DETALLE_MODELO_NO_DISPONIBLE,
+    crear_app,
+)
 from BeijingAir.api.modelo import CargadorModelo, Predictor
 from BeijingAir.features import contract as fc
 
@@ -86,3 +90,46 @@ def test_predict_rechaza_datos_fuera_del_contrato() -> None:
         respuesta = cliente.post("/predict", json=payload)
 
     assert respuesta.status_code == 422
+
+
+class ModeloQueFalla:
+    """Predictor que revienta con un mensaje que NO debe llegar al cliente."""
+
+    SECRETO = "/home/equipo/.mlflow/credenciales.json"
+
+    def predict(self, _: pd.DataFrame) -> np.ndarray:
+        raise RuntimeError(f"no pude abrir {self.SECRETO}")
+
+
+def test_un_fallo_interno_no_filtra_el_detalle_al_cliente() -> None:
+    """Antipatron que la API evita a proposito: ``HTTPException(detail=str(e))``.
+
+    El mensaje de una excepcion suele traer rutas del servidor, nombres de
+    columnas y a veces credenciales. El detalle va al log; al cliente le llega
+    una respuesta estable.
+    """
+    cargador = CargadorModelo(uri="runs:/prueba/modelo", cargar_modelo=lambda _: ModeloQueFalla())
+
+    with TestClient(crear_app(cargador), raise_server_exceptions=False) as cliente:
+        respuesta = cliente.post("/predict", json=_payload_valido())
+
+    assert respuesta.status_code == 500
+    assert respuesta.json()["detail"] == DETALLE_ERROR_INTERNO
+    assert ModeloQueFalla.SECRETO not in respuesta.text
+
+
+def test_metrics_expone_las_metricas_propias_del_servicio() -> None:
+    """Prometheus mide el SERVICIO; Evidently mide los DATOS. Son dos preguntas.
+
+    El contador se etiqueta por resultado para poder distinguir una API sana de
+    una que responde 200 sirviendo errores.
+    """
+    cargador = CargadorModelo(uri="runs:/prueba/modelo", cargar_modelo=_modelo_falso)
+
+    with TestClient(crear_app(cargador)) as cliente:
+        cliente.post("/predict", json=_payload_valido())
+        cuerpo = cliente.get("/metrics").text
+
+    assert "beijing_air_predicciones_total" in cuerpo
+    assert "beijing_air_prediccion_latencia_ms" in cuerpo
+    assert 'resultado="ok"' in cuerpo

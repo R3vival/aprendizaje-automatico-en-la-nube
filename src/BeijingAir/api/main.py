@@ -17,6 +17,10 @@ from BeijingAir.features import contract as fc
 
 LOGGER = logging.getLogger(__name__)
 DETALLE_MODELO_NO_DISPONIBLE = "Modelo no disponible; falta cargar un modelo promovido."
+#: Respuesta estable ante un fallo interno. Es constante a proposito: devolver
+#: ``str(excepcion)`` filtra rutas, nombres de columnas y a veces credenciales
+#: al cliente. El detalle va al log, no a la respuesta.
+DETALLE_ERROR_INTERNO = "No fue posible calcular la prediccion."
 
 
 @asynccontextmanager
@@ -86,7 +90,7 @@ def crear_app(cargador: CargadorModelo | None = None) -> FastAPI:
             registrar_prediccion(resultado="error")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="No fue posible calcular la prediccion.",
+                detail=DETALLE_ERROR_INTERNO,
             ) from None
 
         latencia_ms = (perf_counter() - inicio) * 1_000

@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from BeijingAir.monitoring.check_drift import (
+    EXCLUIDAS_POR_CONSTRUCCION,
     ResultadoDrift,
     drift_categorico,
     drift_numerico,
     evaluar_drift,
+    particiones_por_etiqueta,
 )
 
 
@@ -89,3 +92,41 @@ def test_markdown_incluye_el_veredicto() -> None:
         ResultadoColumna("TEMP", "ks", p_valor=0.0, efecto=0.9, hay_drift=True)
     )
     assert "ACCIONAR" in resultado.a_markdown()
+
+
+def test_las_etiquetas_declaradas_resuelven_a_particiones() -> None:
+    """Las cuatro particiones de config.py se pueden nombrar desde la CLI."""
+    for etiqueta in ("train", "valid", "test", "produccion"):
+        assert particiones_por_etiqueta(etiqueta)
+
+
+def test_una_etiqueta_inventada_falla_diciendo_las_validas() -> None:
+    """El error tiene que decir que escribir, no solo que algo salio mal."""
+    with pytest.raises(KeyError, match="Validas"):
+        particiones_por_etiqueta("el-mes-pasado")
+
+
+def test_comparar_una_particion_consigo_misma_no_da_drift() -> None:
+    """Invariante del detector: datos identicos no pueden producir una alerta.
+
+    Es lo que respalda el ``exit 0`` que se demuestra con
+    ``--referencia train --produccion train``.
+    """
+    rng = np.random.default_rng(11)
+    datos = pd.DataFrame({"TEMP": rng.normal(15, 8, 800), "wd": list("NSEW") * 200})
+
+    resultado = evaluar_drift(datos, datos.copy(), numericas=["TEMP"], categoricas=["wd"])
+
+    assert resultado.fraccion_con_drift == 0.0
+    assert not resultado.hay_drift
+
+
+def test_las_columnas_de_calendario_se_excluyen_por_construccion() -> None:
+    """`mes` y `temporada` driftean siempre entre ventanas temporales distintas.
+
+    Medirlas seria medir que el calendario avanzo. `hora`, `dia_semana` y
+    `station` NO se excluyen: dan efecto ~0 y sirven de control de la particion.
+    """
+    assert {"mes", "temporada"} == EXCLUIDAS_POR_CONSTRUCCION
+    assert "hora" not in EXCLUIDAS_POR_CONSTRUCCION
+    assert "station" not in EXCLUIDAS_POR_CONSTRUCCION

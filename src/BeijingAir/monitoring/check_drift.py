@@ -32,14 +32,21 @@ check corra en CI en dos segundos.
 
 Uso:
 
-    python -m BeijingAir.monitoring.check_drift        # exit 1 si hay drift
+    python -m BeijingAir.monitoring.check_drift                    # exit 1 si hay drift
+    python -m BeijingAir.monitoring.check_drift --referencia train --produccion train
+
+La segunda forma compara una particion consigo misma y por definicion no puede
+dar drift: es la manera de demostrar que el ``exit 0`` funciona, y de verificar
+que el detector no inventa alertas sobre datos identicos.
 
 """
 
 from __future__ import annotations
 
+import argparse
 import logging
 import sys
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -48,8 +55,13 @@ from scipy import stats
 
 from BeijingAir.config import (
     ALFA_DRIFT,
+    PARTICION_TEST,
+    PARTICION_VALID,
+    PARTICIONES_PRODUCCION,
+    PARTICIONES_TRAIN,
     REPORTS_DIR,
     UMBRAL_DRIFT_COLUMNAS,
+    Particion,
 )
 from BeijingAir.features import contract as fc
 
@@ -237,30 +249,90 @@ def reporte_html(
     return str(destino)
 
 
-def main() -> int:
+#: Columnas que se excluyen del check. `mes` y `temporada` driftean por
+#: construccion: dos ventanas temporales distintas siempre tienen mezcla
+#: distinta de meses, asi que medirlas es medir que el calendario avanzo.
+#: `hora`, `dia_semana` y `station` SI se quedan: no driftean por construccion,
+#: y que den efecto ~0 verifica que la particion esta bien armada.
+EXCLUIDAS_POR_CONSTRUCCION: frozenset[str] = frozenset({"mes", "temporada"})
+
+
+def particiones_por_etiqueta(etiqueta: str) -> tuple[Particion, ...]:
+    """Resuelve el nombre de una particion declarada en ``config.py``.
+
+    Se resuelve por etiqueta y no por fechas en la linea de comandos a
+    proposito: un rango escrito a mano en un comando no queda versionado, y el
+    dia que alguien reporte un resultado nadie sabria contra que lo midio.
+
+    Raises:
+        KeyError: si la etiqueta no existe, listando las validas.
+    """
+    disponibles: dict[str, tuple[Particion, ...]] = {
+        "train": PARTICIONES_TRAIN,
+        "valid": (PARTICION_VALID,),
+        "test": (PARTICION_TEST,),
+        "produccion": PARTICIONES_PRODUCCION,
+    }
+    if etiqueta not in disponibles:
+        raise KeyError(f"Particion '{etiqueta}' desconocida. Validas: {sorted(disponibles)}")
+    return disponibles[etiqueta]
+
+
+def _argumentos(argumentos: Sequence[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Compara dos particiones y sale con codigo != 0 si hay drift accionable."
+    )
+    parser.add_argument(
+        "--referencia",
+        default="train",
+        help="Particion de referencia declarada en config.py (por defecto: train).",
+    )
+    parser.add_argument(
+        "--produccion",
+        default="produccion",
+        help="Particion a vigilar (por defecto: produccion).",
+    )
+    parser.add_argument(
+        "--sin-reporte",
+        action="store_true",
+        help="Omite el HTML de Evidently; util en CI, donde solo importa el exit code.",
+    )
+    return parser.parse_args(argumentos)
+
+
+def main(argumentos: Sequence[str] | None = None) -> int:
     """Check de CI: exit 1 si el drift supera el umbral.
 
-    Compara PARTICIONES_TRAIN (referencia) contra PARTICIONES_PRODUCCION
-    (produccion simulada), ambas declaradas en config.py.
+    Por defecto compara ``train`` contra ``produccion``, las particiones
+    declaradas en ``config.py``. Los argumentos permiten comparar cualquier par
+    y, en particular, una particion consigo misma para demostrar el ``exit 0``.
     """
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    opciones = _argumentos(argumentos)
 
-    from BeijingAir.config import PARTICIONES_PRODUCCION, PARTICIONES_TRAIN
     from BeijingAir.data.descarga import cargar_crudo, filtrar
 
+    try:
+        particiones_ref = particiones_por_etiqueta(opciones.referencia)
+        particiones_pro = particiones_por_etiqueta(opciones.produccion)
+    except KeyError as error:
+        logger.error("%s", error)
+        return ERROR_INFRA
+
     df = fc.construir_features(cargar_crudo())
-    # `mes` y `temporada` driftean por construccion: dos ventanas temporales
-    # distintas siempre tienen mezcla distinta de meses. Medirlas es medir que
-    # el calendario avanzo. `hora`, `dia_semana` y `station` SI se quedan: no
-    # driftean por construccion, y que den efecto 0 verifica la particion.
-    EXCLUIDAS = {"mes", "temporada"}
-    numericas = [c for c in fc.FEATURES_NUMERICAS if c not in EXCLUIDAS]
-    categoricas = [c for c in fc.FEATURES_CATEGORICAS if c not in EXCLUIDAS]
+    numericas = [c for c in fc.FEATURES_NUMERICAS if c not in EXCLUIDAS_POR_CONSTRUCCION]
+    categoricas = [c for c in fc.FEATURES_CATEGORICAS if c not in EXCLUIDAS_POR_CONSTRUCCION]
 
-    referencia = pd.concat([filtrar(df, p) for p in PARTICIONES_TRAIN], ignore_index=True)
-    produccion = pd.concat([filtrar(df, p) for p in PARTICIONES_PRODUCCION], ignore_index=True)
+    referencia = pd.concat([filtrar(df, p) for p in particiones_ref], ignore_index=True)
+    produccion = pd.concat([filtrar(df, p) for p in particiones_pro], ignore_index=True)
 
-    logger.info("referencia: %d filas | produccion: %d filas", len(referencia), len(produccion))
+    logger.info(
+        "referencia '%s': %d filas | produccion '%s': %d filas",
+        opciones.referencia,
+        len(referencia),
+        opciones.produccion,
+        len(produccion),
+    )
     if referencia.empty or produccion.empty:
         logger.error("Alguna particion quedo vacia. Revisa los rangos en config.py")
         return ERROR_INFRA
@@ -268,8 +340,8 @@ def main() -> int:
     resultado = evaluar_drift(referencia, produccion, numericas=numericas, categoricas=categoricas)
     print(resultado.a_markdown())
 
-    ruta = reporte_html(referencia, produccion)
-    logger.info("reporte HTML en %s", ruta)
+    if not opciones.sin_reporte:
+        logger.info("reporte HTML en %s", reporte_html(referencia, produccion))
 
     return EXITO_CON_DRIFT if resultado.hay_drift else EXITO_SIN_DRIFT
 

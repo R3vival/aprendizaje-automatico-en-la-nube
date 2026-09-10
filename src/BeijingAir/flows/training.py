@@ -145,31 +145,76 @@ def ejecutar_entrenamiento(
     return {nombre: evaluacion.como_dict() for nombre, evaluacion in resultados.items()}
 
 
-@task(name="evaluar", description="Elige el mejor candidato segun la metrica.")
-def evaluar(resultados: dict[str, MetricasModelo]) -> tuple[str, MetricasModelo]:
-    """Selecciona el candidato con menor RMSE de validacion."""
-    logger = get_run_logger()
+#: Metrica que decide, en validacion. Es la misma que corta el gate sobre el
+#: holdout (``mae_test``) y la que declara la model card: un proyecto con dos
+#: criterios distintos no puede explicar por que un modelo llego a produccion.
+METRICA_DECISORIA = "mae"
 
-    def _rmse(item: tuple[str, MetricasModelo]) -> float:
-        metricas = item[1]
-        for clave in ("rmse_valid", "rmse", "RMSE"):
-            valor = metricas.get(clave)
-            if isinstance(valor, float):
-                return valor
-        raise KeyError(f"No encuentro el RMSE en {list(metricas)}")
 
-    nombre, metricas = min(resultados.items(), key=_rmse)
-    logger.info("mejor candidato: %s", nombre)
-    return nombre, metricas
+def _metrica(metricas: MetricasModelo, clave: str = METRICA_DECISORIA) -> float:
+    """Lee una metrica global del resultado, o falla diciendo que falta."""
+    valor = metricas.get(clave)
+    if not isinstance(valor, float):
+        raise KeyError(f"No encuentro '{clave}' en {sorted(metricas)}")
+    return valor
+
+
+def elegir_candidato(resultados: dict[str, MetricasModelo]) -> tuple[str, float]:
+    """Compuerta de calidad. Funcion **pura**: no toca Prefect, MLflow ni disco.
+
+    No "elige el mejor" entre baseline y bosque, porque el baseline nunca se
+    registra: existe para ser batido. Lo que se decide aqui es si el bosque
+    merece llegar al Registry, y si no lo merece se **lanza excepcion** en lugar
+    de dejar pasar un candidato que no le gana a predecir la media.
+
+    Falla en vez de avisar a proposito: un WARNING en los logs de Prefect no lo
+    lee nadie, y un candidato registrado se lee como un candidato valido.
+
+    Esta separada de la task por la misma razon que ``promote.evaluar_candidato``
+    lo esta de ``promote.promover``: asi la politica se prueba en milisegundos y
+    sin levantar infraestructura.
+
+    Returns:
+        El modelo elegido y su mejora relativa sobre el baseline.
+
+    Raises:
+        KeyError: si falta la metrica que decide.
+        ValueError: si el bosque no supera al baseline.
+    """
+    baseline = _metrica(resultados["baseline"])
+    bosque = _metrica(resultados["bosque"])
+
+    if bosque >= baseline:
+        raise ValueError(
+            f"El bosque ({METRICA_DECISORIA}={bosque:.3f}) no supera al baseline "
+            f"({METRICA_DECISORIA}={baseline:.3f}). No se registra candidato: "
+            "el problema no esta en los hiperparametros."
+        )
+    return "bosque", (baseline - bosque) / baseline
+
+
+@task(name="evaluar", description="El candidato debe superar al baseline o el flow falla.")
+def evaluar(resultados: dict[str, MetricasModelo]) -> str:
+    """Aplica la compuerta y deja la mejora en el log de la corrida."""
+    elegido, mejora = elegir_candidato(resultados)
+    get_run_logger().info(
+        "%s supera al baseline en %.1f%% de %s", elegido, mejora * 100, METRICA_DECISORIA
+    )
+    return elegido
 
 
 @task(name="marcar-candidato", description="Marca la version candidata con el tag de validacion.")
-def marcar_candidato() -> str:
+def marcar_candidato(modelo_elegido: str) -> str:
     """Deja el tag de validacion ``pending`` en la ultima version registrada.
 
     El alias ``@candidate`` ya lo asigna ``models/train.py`` al registrar el
     bosque. Esta task agrega el tag que el gate usa para auditar por que no se
     promovio aun; no mueve ``@champion``.
+
+    Recibe ``modelo_elegido`` de ``evaluar``: es lo que le dice a Prefect que
+    esta task depende de la compuerta de calidad. Sin ese argumento el grafo no
+    tiene la arista y la version se marcaria aunque el candidato no superara al
+    baseline.
     """
     from mlflow import MlflowClient
 
@@ -182,7 +227,10 @@ def marcar_candidato() -> str:
     ultima = max(versiones, key=lambda v: int(v.version))
     cliente.set_model_version_tag(MODELO_REGISTRADO, ultima.version, TAG_VALIDACION, "pending")
     logger.info(
-        "version %s marcada como @%s (champion sin tocar)", ultima.version, MODELO_ALIAS_CANDIDATO
+        "version %s (%s) marcada como @%s (champion sin tocar)",
+        ultima.version,
+        modelo_elegido,
+        MODELO_ALIAS_CANDIDATO,
     )
     return str(ultima.version)
 
@@ -243,9 +291,9 @@ def flujo_entrenamiento(
         n_estimators,
         str(flow_run.id),
     )
-    evaluar(resultados)
+    modelo_elegido = evaluar(resultados)
     publicar_reporte(resultados)
-    marcar_candidato()
+    marcar_candidato(modelo_elegido)
     persistir_estado(dataset_sha256)
     logger.info("Candidato registrado; la promocion la decide CI/CD, no este flow.")
     return ResultadoFlujo(True, dataset_sha256, filas_validadas, resultados)

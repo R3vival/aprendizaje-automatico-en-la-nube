@@ -121,55 +121,17 @@ def verificar_paquetes() -> None:
         )
 
 
-def verificar_git_lfs() -> None:
+def verificar_git() -> None:
+    """Comprueba que git esta disponible.
+
+    No se verifica Git LFS: este proyecto no versiona binarios con LFS. El
+    dataset se descarga con `make data` y se verifica por SHA-256 contra
+    data/raw/metadata.json, que es la unica procedencia que va al repositorio.
+    """
     if shutil.which("git") is None:
         falla("git disponible", "instala Git antes de continuar")
         return
     ok("git disponible", "")
-
-    if shutil.which("git-lfs") is None:
-        falla(
-            "git-lfs instalado",
-            "los diagramas .png se versionan con Git LFS. "
-            "Instala git-lfs y corre: git lfs install && git lfs pull",
-        )
-        return
-
-    try:
-        salida = subprocess.run(
-            ["git", "lfs", "ls-files"],
-            cwd=RAIZ,
-            capture_output=True,
-            text=True,
-            timeout=30,
-            check=False,
-        )
-    except (subprocess.SubprocessError, OSError) as exc:
-        aviso("git lfs ls-files", str(exc))
-        return
-
-    lineas = [ln for ln in salida.stdout.splitlines() if ln.strip()]
-    if not lineas:
-        aviso("Archivos LFS traidos", "no hay archivos LFS registrados")
-        return
-
-    # Un puntero LFS sin traer pesa ~130 bytes. Si el archivo real es pequeno,
-    # el diagrama no se va a ver en el README.
-    punteros = []
-    for linea in lineas:
-        partes = linea.split(" ", 2)
-        if len(partes) == 3:
-            ruta = RAIZ / partes[2].strip()
-            if ruta.exists() and ruta.stat().st_size < 200:
-                punteros.append(partes[2].strip())
-    if punteros:
-        falla(
-            "Archivos LFS traidos",
-            f"{len(punteros)} de {len(lineas)} archivos son punteros sin descargar. "
-            "Corre: git lfs install && git lfs pull",
-        )
-    else:
-        ok("Archivos LFS traidos", f"{len(lineas)} archivos")
 
 
 def verificar_herramientas() -> None:
@@ -256,10 +218,12 @@ def verificar_hooks() -> None:
         )
         return
 
+    # Solo los tipos de hook que .pre-commit-config.yaml declara y USA. Exigir
+    # un pre-push que ningun hook implementa produce un FAIL irresoluble, y un
+    # FAIL que no se puede arreglar entrena al equipo a ignorar la salida.
     esperados = {
-        "pre-commit": "ruff, gitleaks, nbstripout y los hooks propios",
+        "pre-commit": "ruff, gitleaks, nbstripout y los hooks de higiene",
         "commit-msg": "formato de conventional commits",
-        "pre-push": "convencion de nombre de rama",
     }
     faltantes = [
         f"{nombre} ({para})"
@@ -399,8 +363,8 @@ def verificar_docker() -> None:
     if shutil.which("docker") is None:
         aviso(
             "Docker disponible",
-            "necesario para levantar el stack de servicios (MLflow, MinIO). "
-            "Instala Docker Desktop antes de esa fase",
+            "necesario para construir y correr la imagen de la API "
+            "(Dockerfile). Instala Docker Desktop antes de esa fase",
         )
         return
     proc = subprocess.run(
@@ -454,7 +418,7 @@ def main() -> int:
     verificar_paquetes()
     verificar_paquete()
     verificar_estructura()
-    verificar_git_lfs()
+    verificar_git()
     verificar_hooks()
     verificar_puertos()
     verificar_mlflow_arranca(args.rapido)

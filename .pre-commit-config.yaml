@@ -8,7 +8,9 @@
 # pasa. Si divergen, el hook deja de servir y la gente lo desactiva con
 # --no-verify.
 # =============================================================================
-default_install_hook_types: [pre-commit, commit-msg, pre-push]
+# Solo los tipos que algun hook implementa. Declarar `pre-push` instalaba un
+# hook vacio que no verificaba nada.
+default_install_hook_types: [pre-commit, commit-msg]
 # Fija el interprete de los hooks. El Python por defecto del sistema (3.14)
 # esta roto (falta html.entities), asi que se usa el 3.11 del proyecto.
 default_language_version:

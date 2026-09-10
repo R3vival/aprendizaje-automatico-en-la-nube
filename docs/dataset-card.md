@@ -80,11 +80,23 @@ calibraciones distintas.
 
 **Estrategia aplicada en `data/loaders.py`:** se descartan las filas con
 `PM2.5` nulo porque inventar el target enseñaría al modelo una medición que no
-existió. Las variables numéricas se imputan con la mediana de su partición y
-conservan un indicador `<col>_era_nulo`; así el modelo puede aprender que el
-sensor falló. La dirección del viento `wd` se completa como `desconocido`.
-Esta decisión se ejecuta después de validar el crudo y antes de construir las
-features.
+existió. Las variables numéricas se imputan con la mediana de su partición y se
+deja constancia de la imputación en una columna `<col>_era_nulo`. La dirección
+del viento `wd` se completa como `desconocido`. Esta decisión se ejecuta después
+de validar el crudo y antes de construir las features.
+
+**Los indicadores `<col>_era_nulo` NO son features del modelo, y es deliberado.**
+Son un artefacto de calidad de datos con dos usos concretos: el contrato de
+`RegistrosProcesados` los consulta para saltarse la regla física `DEWP ≤ TEMP`
+en las filas donde alguna de las dos magnitudes fue imputada, y permiten auditar
+cuánto de una partición viene del sensor y cuánto de la mediana.
+
+Meterlos como features exigiría que la API pudiera recibir un valor ausente, y
+hoy `PrediccionEntrada` obliga a enviar las trece magnitudes. El indicador
+valdría siempre 0 en producción y variable en entrenamiento: un *train/serve
+skew* introducido a mano. Si en el futuro la API acepta nulos, la decisión se
+puede revisar; mientras tanto, la ausencia se maneja con la mediana aprendida
+por el `SimpleImputer` que vive **dentro** del artefacto.
 
 ## Calibración de controles del contrato
 

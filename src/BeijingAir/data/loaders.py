@@ -73,10 +73,15 @@ def limpiar(df: pd.DataFrame) -> pd.DataFrame:
       modelo a replicar un sensor que no existio. Las filas con target nulo se
       descartan (2,1 % del total).
     - Las **numericas** (contaminantes y meteorologia) se imputan con la mediana
-      de la columna, y se agrega la columna indicadora ``<col>_era_nulo`` para
-      que el modelo pueda usar la ausencia como senal en lugar de confundirla
-      con el valor imputado.
+      de la columna, y se deja constancia en ``<col>_era_nulo``.
     - La **categorica** ``wd`` se rellena con ``desconocido``.
+
+    ``<col>_era_nulo`` NO es una feature: no esta en ``features.contract.FEATURES``
+    y el modelo no la ve. Es trazabilidad de la imputacion, y la consume el
+    contrato de ``RegistrosProcesados`` para saltarse la regla ``DEWP <= TEMP``
+    donde alguna de las dos magnitudes fue imputada. El motivo de no promoverla a
+    feature esta en docs/dataset-card.md: la API exige las trece magnitudes, asi
+    que el indicador seria constante en serving y variable en entrenamiento.
 
     ``fillna(0)`` sobre un contaminante seria un error: afirmaria aire limpio en
     las horas en que el sensor callo, y el modelo aprenderia esos ceros como

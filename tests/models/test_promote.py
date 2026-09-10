@@ -60,6 +60,7 @@ class _ClienteFalso:
             "run-candidate": _CorridaFalsa(_DatosFalsos({"mae_test": 20.0, "r2_test": 0.5}))
         }
         self.alias_asignado: tuple[str, str, str] | None = None
+        self.tags: dict[str, str] = {}
 
     def get_model_version_by_alias(self, _: str, alias: str) -> _VersionFalsa:
         if alias not in self.aliases:
@@ -75,6 +76,9 @@ class _ClienteFalso:
     def set_registered_model_alias(self, nombre: str, alias: str, version: str) -> None:
         self.alias_asignado = (nombre, alias, version)
 
+    def set_model_version_tag(self, _: str, __: str, key: str, value: str) -> None:
+        self.tags[key] = value
+
 
 def test_promotor_mueve_alias_solo_despues_de_aprobar() -> None:
     """La unica mutacion de Registry es asignar champion al candidato aprobado."""
@@ -86,3 +90,45 @@ def test_promotor_mueve_alias_solo_despues_de_aprobar() -> None:
     assert resultado.decision.aprobada
     assert resultado.promovido
     assert cliente.alias_asignado == ("beijing-air-pm25", "champion", "7")
+
+
+def test_una_aprobacion_deja_el_tag_de_validacion() -> None:
+    """El tag acompana al alias: la version aprobada queda marcada como passed."""
+    cliente = _ClienteFalso()
+    PromotorModelo(cliente).promover(
+        criterios=CriteriosPromocion(max_mae_test=30.0, min_r2_test=0.0),
+    )
+
+    assert cliente.tags["validation_status"] == "passed"
+
+
+def test_un_rechazo_tambien_deja_evidencia_en_la_version() -> None:
+    """La evidencia de por que NO se promovio vale tanto como la de por que si.
+
+    Sin este comportamiento, "por que no se promovio aquel candidato" no tiene
+    respuesta tres semanas despues: el alias no se movio y no queda rastro.
+    """
+    cliente = _ClienteFalso()
+    resultado = PromotorModelo(cliente).promover(
+        criterios=CriteriosPromocion(max_mae_test=10.0, min_r2_test=0.0),
+    )
+
+    assert not resultado.decision.aprobada
+    assert not resultado.promovido
+    assert cliente.alias_asignado is None
+    assert cliente.tags["validation_status"] == "failed"
+    assert cliente.tags["gate_motivo"]
+
+
+def test_dry_run_no_muta_el_registry() -> None:
+    """Un ensayo audita la decision sin escribir alias ni tags."""
+    cliente = _ClienteFalso()
+    resultado = PromotorModelo(cliente).promover(
+        criterios=CriteriosPromocion(max_mae_test=30.0, min_r2_test=0.0),
+        dry_run=True,
+    )
+
+    assert resultado.decision.aprobada
+    assert not resultado.promovido
+    assert cliente.alias_asignado is None
+    assert cliente.tags == {}
