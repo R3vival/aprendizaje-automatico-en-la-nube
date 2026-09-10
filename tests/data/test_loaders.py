@@ -61,3 +61,17 @@ def test_split_temporal_corta_por_posicion() -> None:
     train, test = split_temporal(df, fraccion_train=0.67)
     assert len(train) == 2
     assert len(test) == 1
+
+
+def test_los_indicadores_de_ausencia_no_son_features_del_modelo() -> None:
+    """Decision declarada en docs/dataset-card.md, blindada aqui.
+
+    ``limpiar`` produce ``<col>_era_nulo`` como trazabilidad de la imputacion,
+    no como senal para el modelo. Promoverlos a feature sin que la API acepte
+    valores ausentes los volveria constantes en serving y variables en
+    entrenamiento: train/serve skew introducido a mano. Si alguien los agrega a
+    FEATURES, este test lo obliga a resolver antes el contrato de la API.
+    """
+    indicadores = {f"{columna}_era_nulo" for columna in fc.CRUDAS_NUMERICAS}
+
+    assert not indicadores & set(fc.FEATURES)

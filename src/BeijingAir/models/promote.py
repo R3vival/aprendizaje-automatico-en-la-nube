@@ -26,6 +26,7 @@ from BeijingAir.config import (
     MODELO_ALIAS,
     MODELO_ALIAS_CANDIDATO,
     MODELO_REGISTRADO,
+    TAG_VALIDACION,
 )
 
 
@@ -71,6 +72,8 @@ class ClienteRegistry(Protocol):
     def get_run(self, run_id: str) -> CorridaMLflow: ...
 
     def set_registered_model_alias(self, name: str, alias: str, version: str) -> object: ...
+
+    def set_model_version_tag(self, name: str, version: str, key: str, value: str) -> object: ...
 
 
 @dataclass(frozen=True)
@@ -224,6 +227,23 @@ class PromotorModelo:
             criterios,
         )
         promovido = decision.aprobada and not dry_run
+
+        # Los tags se escriben SIEMPRE, tambien cuando se rechaza: la evidencia
+        # de por que un modelo NO llego a produccion vale tanto como la de por
+        # que si. Sin ellos, "por que no se promovio aquel candidato" no tiene
+        # respuesta tres semanas despues.
+        if not dry_run:
+            estado = "passed" if decision.aprobada else "failed"
+            self.cliente.set_model_version_tag(
+                self.nombre_modelo, candidato.version, TAG_VALIDACION, estado
+            )
+            self.cliente.set_model_version_tag(
+                self.nombre_modelo,
+                candidato.version,
+                "gate_motivo",
+                "; ".join(decision.razones),
+            )
+
         if promovido:
             self.cliente.set_registered_model_alias(
                 self.nombre_modelo, self.alias_champion, candidato.version
