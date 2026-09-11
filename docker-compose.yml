@@ -1,0 +1,78 @@
+# =============================================================================
+# Stack local: MLflow con registry + la API de inferencia
+# =============================================================================
+#   make up   ->  MLflow  http://127.0.0.1:5001
+#                 API     http://127.0.0.1:8000/docs
+#
+# Sin clave `version:`: Compose v2 la ignora y emite un warning en cada comando.
+#
+# Por que SQLite y no Postgres + MinIO: MLflow necesita un backend con base de
+# datos para tener Model Registry, y SQLite lo cumple con cero servicios extra.
+# Lo que se pierde es concurrencia real y un artifact store que hable S3. Para
+# un proyecto de curso alcanza; para un equipo escribiendo runs a la vez, no.
+#
+# Los healthchecks usan `python`, que la imagen SI trae. Uno con `curl` sobre
+# `python:*-slim` falla siempre, deja el contenedor `unhealthy` de forma
+# permanente y cuelga cualquier `depends_on: service_healthy`.
+# =============================================================================
+
+name: beijing-air
+
+services:
+  # ===========================================================================
+  # MLflow — tracking server con registry
+  # ===========================================================================
+    # --allowed-hosts: MLflow 3.x rechaza peticiones cuyo Host no reconoce
+    # (proteccion contra DNS rebinding). La API se conecta como http://mlflow:5001,
+    # asi que ese nombre debe estar en la lista o responde 403.
+    # --serve-artifacts: el servidor recibe y sirve los archivos del modelo por HTTP
+    # (URIs mlflow-artifacts:/). Con --default-artifact-root el cliente escribiria
+    # el modelo en esa ruta en SU propia maquina, no en el contenedor.
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v3.15.1
+    command: >
+      mlflow server
+      --backend-store-uri sqlite:////mlflow/mlflow.db
+      --serve-artifacts
+      --artifacts-destination /mlflow/artifacts
+      --host 0.0.0.0
+      --port 5001
+      --allowed-hosts mlflow,mlflow:5001,localhost,localhost:5001,127.0.0.1,127.0.0.1:5001
+    ports:
+      - "127.0.0.1:5001:5001"
+    volumes:
+      - mlflow-data:/mlflow
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:5001/health', timeout=4).status == 200 else 1)",
+        ]
+      interval: 15s
+      timeout: 5s
+      start_period: 40s
+      retries: 5
+    restart: unless-stopped
+
+  # ===========================================================================
+  # API de inferencia — resuelve el modelo del registry por alias
+  # ===========================================================================
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      # `mlflow` es el nombre del servicio, y dentro de la red de Compose ese es
+      # el hostname. NO 127.0.0.1: eso apuntaria al propio contenedor de la API.
+      MLFLOW_TRACKING_URI: http://mlflow:5001
+    depends_on:
+      mlflow:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  mlflow-data:

@@ -13,8 +13,12 @@ SHELL := /bin/bash
 UV := uv
 PY := $(UV) run
 
-.PHONY: help setup data smoke test test-fast lint format typecheck check validate-data mlflow prefect-server train flow serve-flow serve promote-check drift flow clean
+# PYTHONUTF8: MLflow imprime emojis. Sin esto, Windows cae a cp1252 y revienta
+# con UnicodeEncodeError cuando la salida se redirige. `export` es directiva de
+# make, no del shell: funciona igual en bash, cmd y PowerShell.
+export PYTHONUTF8 = 1
 
+.PHONY: help setup data smoke test test-fast lint format typecheck check validate-data mlflow prefect-server train flow serve-flow serve promote promote-check drift up down clean
 # =============================================================================
 help: ## Muestra los targets disponibles
 	@echo ""
@@ -81,7 +85,7 @@ drift: ## Reporte de drift: referencia vs produccion simulada
 	$(PY) python -m BeijingAir.monitoring.check_drift
 
 flow: ## Pipeline de entrenamiento orquestado con Prefect
-	PYTHONUTF8=1 $(PY) python -m BeijingAir.flows.training
+	$(PY) python -m BeijingAir.flows.training
 
 prefect-server: ## Inicia Prefect en http://127.0.0.1:4200
 	$(PY) prefect server start
@@ -95,6 +99,20 @@ serve: ## Inicia la API local de prediccion en http://127.0.0.1:8000
 promote-check: ## Evalua candidate contra el gate sin mover el alias champion
 	$(PY) python -m BeijingAir.models.promote --dry-run
 
+promote: ## Promueve el candidato a champion si pasa el gate
+	$(PY) python -m BeijingAir.models.promote
+
+# =============================================================================
+# Stack local con Docker
+# =============================================================================
+up: ## Levanta el stack local: MLflow + API
+	docker compose up -d --build
+	@echo ""
+	@echo "  MLflow  http://127.0.0.1:5001"
+	@echo "  API     http://127.0.0.1:8000/docs"
+
+down: ## Detiene el stack
+	docker compose down
 # =============================================================================
 # Limpieza
 # =============================================================================
