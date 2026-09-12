@@ -137,66 +137,51 @@ make flow                     # terminal 3 — el pipeline
 > Si el stack de Docker está arriba (`make up`), **no corras `make mlflow`**: el
 > contenedor ya ocupa el puerto 5001. Usa uno u otro, no los dos.
 
-### Las seis tasks
+### El flujo de entrenamiento
 
 ```
-extraer ──► validar ──► entrenar ──► evaluar ──┬──► registrar_candidato
-                                               └──► publicar_reporte
+asegurar_origen ──► preparar_y_validar ──► entrenar_y_registrar ──► evaluar
+                                                                         │
+                            ┌────────────────────────────────────────────┘
+                            ▼
+                   publicar_reporte ──► marcar_candidato ──► guardar_estado
 ```
 
 | Task | Qué hace | Detalle |
 |---|---|---|
-| `extraer` | Descarga el ZIP y registra su hash | `retries=3` con backoff `[10, 30, 60]` |
-| `validar` | Corre el contrato sobre el crudo | `cache_key_fn=task_input_hash` |
-| `entrenar` | Llama a `entrenar_y_registrar()` | Registra en MLflow |
-| `evaluar` | Elige el mejor candidato por RMSE | |
-| `registrar_candidato` | Pone el alias `@candidate` | **No toca `@champion`** |
+| `asegurar_origen` | Descarga el ZIP si falta y registra su hash | 2 reintentos con esperas de 5 y 15 segundos |
+| `preparar_y_validar` | Valida contratos y prepara train, validación y test | Cache por entradas durante un día |
+| `entrenar_y_registrar` | Entrena los modelos y los registra en MLflow | Conserva el id de la corrida de Prefect |
+| `evaluar` | Comprueba que el candidato supere al baseline | Si no lo supera, el flow falla |
 | `publicar_reporte` | Tabla de métricas como artifact | Visible en la UI |
+| `marcar_candidato` | Deja la versión pendiente de promoción | **No toca `@champion`** |
+| `guardar_estado` | Guarda el hash del último dato procesado | Evita reentrenar sin datos nuevos |
 
-El orden **no está escrito a mano**: sale de los datos que cada task le pasa a la
-siguiente. Por eso `validar` recibe la ruta que devuelve `extraer` aunque no la
-use.
+El orden sale de las dependencias entre tareas: por ejemplo, una versión solo se
+marca como candidata después de superar la evaluación.
 
 ### El flow registra, no promueve
 
-`registrar_candidato` marca la versión nueva con el alias `@candidate` y el tag
+`marcar_candidato` deja la versión nueva con el alias `@candidate` y el tag
 `validation_status=pending`. **Nunca mueve `@champion`.** La promoción es
 responsabilidad del gate, no del entrenamiento: un modelo no llega a producción
 por el hecho de que el entrenamiento no lanzó excepciones.
 
-### Por qué el backoff es `[10, 30, 60]` y no `[2, 2, 2]`
 
-Reintentar cada dos segundos contra un servicio caído solo le agrega carga. La
-lista da control explícito por intento y da tiempo real a que el proveedor se
-recupere.
+### Caché y reintentos
 
-### Caching: medición y diagnóstico
+La preparación de datos se cachea por un día usando el hash del dataset y la
+muestra solicitada. Prefect muestra si una tarea se reutilizó en cada corrida;
+no se publican tiempos fijos porque cambian entre equipos, red e infraestructura.
 
-Dos ejecuciones consecutivas, cronometradas:
 
-| Task | 1ª (caché frío) | 2ª (caché caliente) | Estado |
-|---|---:|---:|---|
-| `extraer` | 0,26 s | 0,27 s | Completed |
-| **`validar`** | **0,765 s** | **0,009 s** | **Cached** |
-| `entrenar` | 23,7 s | 32,2 s | Completed |
-| **Total** | **30,1 s** | **38,2 s** | |
 
-**El caching funciona: `validar` es 85 veces más rápido en la segunda corrida**, y
-Prefect lo reporta explícitamente como `Cached(type=COMPLETED)`.
 
-**Pero el tiempo total no baja, y esa es la observación importante.** El ahorro es
-de 0,76 s; `entrenar` varió 8,5 s entre las dos corridas por su cuenta. La
-variabilidad de una task grande se come el ahorro de una pequeña.
 
-`entrenar` es el 90-95 % del pipeline, y parte de ese tiempo es MLflow exportando
-las 227 dependencias del proyecto para guardarlas junto al modelo. **Ninguna de
-las dos cosas se debe cachear**: cachear el entrenamiento significa "no vuelvas a
-entrenar", y la exportación de dependencias es la trazabilidad que hace
-reproducible el artefacto.
 
-**Pendiente declarado:** la preparación de datos ocurre dentro de `entrenar`
-(en `data/loaders.py`), no como task independiente. Sacarla haría el ahorro
-visible en el total.
+
+El entrenamiento no se cachea a propósito: una corrida nueva debe conservar sus
+métricas y artefactos en MLflow para que sea trazable.
 
 ### El flow no reentrena si los datos no cambiaron
 
@@ -411,4 +396,9 @@ para estructura, convenciones y configuración.
 
 ## Contribuir
 
-Pendiente de definir las convenciones de contribución.
+1. Parte de `main` actualizado y crea una rama con un nombre descriptivo.
+2. Antes de abrir un PR ejecuta `uv run ruff format --check .`,
+   `uv run ruff check .`, `uv run mypy` y
+   `uv run pytest -m "not slow and not integration"`.
+3. Describe en el PR qué cambió, cómo lo validaste y espera la revisión de al
+   menos un integrante antes de fusionarlo a `main`.

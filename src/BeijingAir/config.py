@@ -69,8 +69,8 @@ VERSION: str = "0.1.0"
 # Rutas
 # =============================================================================
 # PROJECT_ROOT se deriva de la ubicacion de este archivo, nunca de una ruta
-# absoluta escrita a mano: una ruta como C:\Users\... garantiza que el proyecto
-# no corre en la maquina de nadie mas.
+# absoluta escrita a mano: una ruta de una maquina concreta impide que el proyecto
+# corra igual en los demas entornos.
 PROJECT_ROOT: Final[Path] = Path(__file__).resolve().parents[2]
 DATA_DIR: Final[Path] = Path(os.getenv("DATA_DIR", PROJECT_ROOT / "data"))
 RAW_DIR: Final[Path] = DATA_DIR / "raw"
