@@ -18,7 +18,7 @@ PY := $(UV) run
 # make, no del shell: funciona igual en bash, cmd y PowerShell.
 export PYTHONUTF8 = 1
 
-.PHONY: help setup data smoke test test-fast lint format typecheck check validate-data mlflow prefect-server train flow serve-flow serve promote promote-check drift up down clean
+.PHONY: help setup data smoke test test-fast lint format typecheck check validate-data mlflow prefect-server train hpo model-card flow serve-flow serve promote promote-check drift up down clean
 # =============================================================================
 help: ## Muestra los targets disponibles
 	@echo ""
@@ -77,6 +77,12 @@ mlflow: ## Inicia el servidor local de tracking en http://127.0.0.1:5001
 
 train: ## Entrena baseline y bosque, y registra ambos en MLflow
 	$(PY) python -m BeijingAir.models.train
+
+hpo: ## Busca hiperparametros del bosque con Optuna (runs anidados)
+	$(PY) python -m BeijingAir.models.train --hpo --trials 20
+
+model-card: ## Genera docs/model-card.md desde el modelo registrado
+	$(PY) python scripts/model_card.py
 
 # =============================================================================
 # Monitoreo

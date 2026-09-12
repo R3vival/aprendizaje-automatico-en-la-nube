@@ -11,11 +11,15 @@ import argparse
 import json
 import subprocess
 from collections.abc import Mapping, Sequence
+from typing import Any, Final
 
 import mlflow
 import mlflow.sklearn
+import optuna
 import pandas as pd
 from mlflow.models import infer_signature
+from optuna.pruners import MedianPruner
+from optuna.samplers import TPESampler
 
 from BeijingAir.config import (
     FILAS_POR_PARTICION,
@@ -211,6 +215,139 @@ def entrenar_y_registrar(
     return resultados
 
 
+# =============================================================================
+# Busqueda de hiperparametros (Optuna) — Sesion 3 del curso
+# =============================================================================
+#: Espacio de busqueda del Random Forest. ``n_estimators`` se maneja aparte
+#: porque ``crear_pipeline`` lo recibe como parametro nombrado; el resto entra
+#: por ``kwargs_extra``. Definirlo como dato (no como codigo) permite loguear el
+#: espacio explorado junto al study.
+ESPACIO_RANDOM_FOREST: Final[dict[str, tuple[str, int | float, int | float]]] = {
+    "n_estimators": ("int", 100, 500),
+    "max_depth": ("int", 5, 30),
+    "min_samples_leaf": ("int", 1, 10),
+    "min_samples_split": ("int", 2, 15),
+    "max_features": ("float", 0.3, 1.0),
+}
+
+
+def _sugerir(trial: optuna.Trial) -> dict[str, Any]:
+    """Traduce ``ESPACIO_RANDOM_FOREST`` a llamadas ``suggest_*`` de Optuna."""
+    propuesta: dict[str, Any] = {}
+    for nombre, (clase, bajo, alto) in ESPACIO_RANDOM_FOREST.items():
+        if clase == "int":
+            propuesta[nombre] = trial.suggest_int(nombre, int(bajo), int(alto))
+        else:
+            propuesta[nombre] = trial.suggest_float(nombre, float(bajo), float(alto))
+    return propuesta
+
+
+def _loggear_trial(
+    trial: optuna.Trial,
+    *,
+    x_train: pd.DataFrame,
+    y_train: pd.Series,
+    x_valid: pd.DataFrame,
+    y_valid: pd.Series,
+    estaciones_valid: pd.Series,
+) -> float:
+    """Entrena un bosque con la propuesta del trial y devuelve su MAE de valid.
+
+    El fit ocurre dentro del run anidado: cada trial queda asociado a su
+    combinacion de hiperparametros y a su metrica. El objetivo se mide en
+    ``valid``, nunca en ``test`` (el holdout es el juez del gate de S06).
+    """
+    propuesta = _sugerir(trial)
+    n_estim = int(propuesta.pop("n_estimators"))
+    with mlflow.start_run(run_name=f"trial-{trial.number:03d}", nested=True):
+        pipeline = crear_pipeline("bosque", n_estimators=n_estim, **propuesta)
+        pipeline.fit(x_train, y_train)
+        evaluacion = evaluar_regresion(y_valid, pipeline.predict(x_valid), estaciones_valid)
+        mlflow.log_params(
+            {
+                "modelo": "bosque",
+                "semilla": SEMILLA,
+                "trial": trial.number,
+                "n_estimators": n_estim,
+                **propuesta,
+            }
+        )
+        mlflow.log_metrics(
+            {
+                "mae_valid": evaluacion.mae,
+                "rmse_valid": evaluacion.rmse,
+                "r2_valid": evaluacion.r2,
+                "peor_mae_estacion_valid": evaluacion.peor_mae_estacion,
+            }
+        )
+    return evaluacion.mae
+
+
+def optimizar_hiperparametros(
+    *,
+    trials: int = 20,
+    filas: int | None = FILAS_POR_PARTICION,
+) -> dict[str, Any]:
+    """Busca hiperparametros del bosque con Optuna sobre ``valid``.
+
+    Estructura de runs: un **parent run** para el study y un **child run por
+    trial** (``nested=True``), de modo que la UI muestra el arbol parent/child en
+    lugar de runs sueltos. El sampler usa la semilla global para que dos corridas
+    del mismo estudio sobre los mismos datos exploren las mismas combinaciones.
+
+    El objetivo se calcula SIEMPRE sobre ``PARTICION_VALID``; ``PARTICION_TEST``
+    no participa en la seleccion de hiperparametros.
+
+    Returns:
+        ``study.best_params``, el diccionario de mejores hiperparametros.
+    """
+    mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
+    mlflow.set_experiment(MLFLOW_EXPERIMENT)
+    train = preparar_particiones(PARTICIONES_TRAIN, filas=filas)
+    valid = preparar_particion(PARTICION_VALID, filas=filas)
+    x_train, y_train = separar_features_target(train)
+    x_valid, y_valid = separar_features_target(valid)
+    estaciones_valid = valid[fc.COL_SUBGRUPO]
+
+    study = optuna.create_study(
+        study_name=f"hpo-bosque-{trials}",
+        direction="minimize",
+        sampler=TPESampler(seed=SEMILLA),
+        pruner=MedianPruner(n_startup_trials=5, n_warmup_steps=3, interval_steps=1),
+    )
+
+    def objetivo(trial: optuna.Trial) -> float:
+        return _loggear_trial(
+            trial,
+            x_train=x_train,
+            y_train=y_train,
+            x_valid=x_valid,
+            y_valid=y_valid,
+            estaciones_valid=estaciones_valid,
+        )
+
+    with mlflow.start_run(run_name=f"hpo-bosque-{trials}-trials"):
+        mlflow.set_tags({"tipo": "hpo-parent", "sampler": "TPESampler", "pruner": "MedianPruner"})
+        mlflow.log_params(
+            {
+                "trials": trials,
+                "espacio": {k: list(v) for k, v in ESPACIO_RANDOM_FOREST.items()},
+                "semilla": SEMILLA,
+            }
+        )
+        study.optimize(objetivo, n_trials=trials, catch=())
+        completados = [t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]
+        mlflow.log_metrics(
+            {
+                "mejor_mae_valid": float(study.best_value),
+                "trials_completados": float(len(completados)),
+            }
+        )
+        mlflow.log_dict(dict(study.best_params), "hpo/best_params.json")
+        print(f"HPO: mejor mae_valid={study.best_value:.3f} con {study.best_params}")
+    return dict(study.best_params)
+
+
 def _argumentos(argumentos: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Entrena PM2.5 y registra las corridas en MLflow.")
     parser.add_argument(
@@ -230,6 +367,17 @@ def _argumentos(argumentos: Sequence[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Registra el bosque en el Model Registry de MLflow.",
     )
+    parser.add_argument(
+        "--hpo",
+        action="store_true",
+        help="Busca hiperparametros del bosque con Optuna (runs anidados).",
+    )
+    parser.add_argument(
+        "--trials",
+        type=int,
+        default=20,
+        help="Numero de trials de la busqueda de hiperparametros.",
+    )
     return parser.parse_args(argumentos)
 
 
@@ -237,6 +385,9 @@ def main(argumentos: Sequence[str] | None = None) -> None:
     """Punto de entrada de ``python -m BeijingAir.models.train``."""
     opciones = _argumentos(argumentos)
     filas = None if opciones.filas == 0 else opciones.filas
+    if opciones.hpo:
+        optimizar_hiperparametros(trials=opciones.trials, filas=filas)
+        return
     resultados = entrenar_y_registrar(
         filas=filas,
         n_estimators=opciones.n_estimators,
