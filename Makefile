@@ -18,7 +18,7 @@ PY := $(UV) run
 # make, no del shell: funciona igual en bash, cmd y PowerShell.
 export PYTHONUTF8 = 1
 
-.PHONY: help setup data smoke test test-fast lint format typecheck check validate-data mlflow prefect-server train hpo model-card flow serve-flow serve promote promote-check drift up down clean
+.PHONY: help setup data smoke test test-fast lint format typecheck check validate-data mlflow prefect-server train hpo model-card flow serve-flow deploy-flow work-pool worker serve promote promote-check drift up down clean
 # =============================================================================
 help: ## Muestra los targets disponibles
 	@echo ""
@@ -96,8 +96,17 @@ flow: ## Pipeline de entrenamiento orquestado con Prefect
 prefect-server: ## Inicia Prefect en http://127.0.0.1:4200
 	$(PY) prefect server start
 
-serve-flow: ## Deja servido el schedule mensual de entrenamiento en Prefect
+serve-flow: ## Deja servido el schedule mensual de entrenamiento en Prefect (modo clase)
 	$(PY) python -m BeijingAir.flows.training --serve
+
+deploy-flow: ## Crea un deployment persistente contra el work pool (Prefect 3)
+	$(PY) python -m BeijingAir.flows.deploy deploy
+
+work-pool: ## Crea el work pool de tipo process (si no existe)
+	$(PY) prefect work-pool create beijing-air-pool --type process || true
+
+worker: ## Levanta un worker del work pool (dejar esta terminal abierta)
+	$(PY) prefect worker start --pool beijing-air-pool
 
 serve: ## Inicia la API local de prediccion en http://127.0.0.1:8000
 	$(PY) uvicorn BeijingAir.api.main:app --host 127.0.0.1 --port 8000
