@@ -62,6 +62,28 @@ class PrediccionSalida(BaseModel):
     latencia_ms: float = Field(ge=0)
 
 
+#: Tope de predicciones por lote. Acota la memoria por request (un lote sin
+#: limite es un vector de denegacion de servicio) y la latencia de cola. Vive en
+#: el schema para que aparezca en OpenAPI y el cliente lo vea antes de mandar.
+MAX_LOTE: int = 500
+
+
+class LotePrediccion(BaseModel):
+    """Lote de lecturas horarias para predecir en una sola llamada."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    lecturas: list[PrediccionEntrada] = Field(min_length=1, max_length=MAX_LOTE)
+
+
+class LotePrediccionSalida(BaseModel):
+    """Respuesta agregada de un lote, con la version que lo produjo."""
+
+    predicciones: list[PrediccionSalida]
+    model_name: str
+    model_version: str
+
+
 class SaludSalida(BaseModel):
     """Estado de vida y disponibilidad del modelo, sin filtrar detalles internos."""
 

@@ -18,7 +18,7 @@ PY := $(UV) run
 # make, no del shell: funciona igual en bash, cmd y PowerShell.
 export PYTHONUTF8 = 1
 
-.PHONY: help setup data smoke test test-fast lint format typecheck check validate-data mlflow prefect-server train hpo model-card flow serve-flow deploy-flow work-pool worker serve promote promote-check drift up down clean
+.PHONY: help setup data smoke test test-fast lint format typecheck check validate-data mlflow prefect-server train hpo model-card flow serve-flow deploy-flow work-pool worker batch serve promote promote-check drift up down clean
 # =============================================================================
 help: ## Muestra los targets disponibles
 	@echo ""
@@ -89,6 +89,9 @@ model-card: ## Genera docs/model-card.md desde el modelo registrado
 # =============================================================================
 drift: ## Reporte de drift: referencia vs produccion simulada
 	$(PY) python -m BeijingAir.monitoring.check_drift
+
+batch: ## Predice sobre la particion de produccion y persiste con trazabilidad
+	$(PY) python -m BeijingAir.flows.batch
 
 flow: ## Pipeline de entrenamiento orquestado con Prefect
 	$(PY) python -m BeijingAir.flows.training

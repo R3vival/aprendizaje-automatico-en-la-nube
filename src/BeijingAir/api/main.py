@@ -3,15 +3,24 @@
 from __future__ import annotations
 
 import logging
+import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from time import perf_counter
 
+import pandas as pd
 from fastapi import FastAPI, HTTPException, Response, status
 
 from BeijingAir.api.metricas import contenido_prometheus, registrar_prediccion
 from BeijingAir.api.modelo import CargadorModelo
-from BeijingAir.api.schemas import ModeloSalida, PrediccionEntrada, PrediccionSalida, SaludSalida
+from BeijingAir.api.schemas import (
+    LotePrediccion,
+    LotePrediccionSalida,
+    ModeloSalida,
+    PrediccionEntrada,
+    PrediccionSalida,
+    SaludSalida,
+)
 from BeijingAir.config import PROYECTO, VERSION
 from BeijingAir.features import contract as fc
 
@@ -21,6 +30,20 @@ DETALLE_MODELO_NO_DISPONIBLE = "Modelo no disponible; falta cargar un modelo pro
 #: ``str(excepcion)`` filtra rutas, nombres de columnas y a veces credenciales
 #: al cliente. El detalle va al log, no a la respuesta.
 DETALLE_ERROR_INTERNO = "No fue posible calcular la prediccion."
+
+
+def _error_interno() -> HTTPException:
+    """Construye un 500 estable con un id de correlacion para rastrear el log.
+
+    El detalle va al log (con ``logger.exception`` en el llamador); al cliente
+    le llega un mensaje estable mas el ``id_correlacion``, que permite encontrar
+    la traza exacta del incidente sin filtrar el interior del servicio.
+    """
+    id_correlacion = uuid.uuid4().hex[:8]
+    return HTTPException(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        detail={"detalle": DETALLE_ERROR_INTERNO, "id_correlacion": id_correlacion},
+    )
 
 
 @asynccontextmanager
@@ -88,10 +111,7 @@ def crear_app(cargador: CargadorModelo | None = None) -> FastAPI:
         except Exception:
             LOGGER.exception("Fallo al ejecutar una prediccion")
             registrar_prediccion(resultado="error")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=DETALLE_ERROR_INTERNO,
-            ) from None
+            raise _error_interno() from None
 
         latencia_ms = (perf_counter() - inicio) * 1_000
         registrar_prediccion(resultado="ok", latencia_ms=latencia_ms)
@@ -100,6 +120,44 @@ def crear_app(cargador: CargadorModelo | None = None) -> FastAPI:
             model_name=servicio.nombre,
             model_version=servicio.version or "desconocida",
             latencia_ms=latencia_ms,
+        )
+
+    @app.post("/predict/batch", response_model=LotePrediccionSalida, tags=["prediccion"])
+    def predict_batch(entrada: LotePrediccion) -> LotePrediccionSalida:
+        """Estima PM2.5 para un lote de lecturas en una sola llamada."""
+        servicio: CargadorModelo = app.state.cargador
+        if not servicio.listo:
+            registrar_prediccion(resultado="modelo_no_disponible")
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=DETALLE_MODELO_NO_DISPONIBLE,
+            )
+
+        inicio = perf_counter()
+        try:
+            dataframe = pd.concat([lectura.a_dataframe() for lectura in entrada.lecturas])
+            estimaciones = servicio.predecir_lote(dataframe)
+        except Exception:
+            LOGGER.exception("Fallo al ejecutar un lote de predicciones")
+            registrar_prediccion(resultado="error")
+            raise _error_interno() from None
+
+        latencia_ms = (perf_counter() - inicio) * 1_000
+        version = servicio.version or "desconocida"
+        predicciones = [
+            PrediccionSalida(
+                prediccion_pm25=valor,
+                model_name=servicio.nombre,
+                model_version=version,
+                latencia_ms=latencia_ms,
+            )
+            for valor in estimaciones
+        ]
+        registrar_prediccion(resultado="ok", latencia_ms=latencia_ms)
+        return LotePrediccionSalida(
+            predicciones=predicciones,
+            model_name=servicio.nombre,
+            model_version=version,
         )
 
     @app.get("/", tags=["operacion"])
