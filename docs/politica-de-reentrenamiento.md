@@ -27,9 +27,12 @@ correcto.
 
 | Señal | Umbral | Ventana | Por qué **este** número |
 |---|---|---|---|
-| Fracción de columnas con `drift` | 0.30 | partición completa | UMBRAL_DRIFT_COLUMNAS en config.py; con ≤30% de columnas el sistema sigue sirviendo. |
-| Tamaño de efecto por columna (KS / V de Cramer) | KS ≥ 0.10 (num), V de Cramer ≥ 0.10 (cat) | partición completa | EFECTO_MINIMO_KS; un KS de 0.05 casi nunca justifica reentrenar, uno de 0.30 sí. |
-| Degradación de la métrica de negocio | MAE +5% vs champion | holdout test | MAX_EMPEORAMIENTO_MAE=0.05; no se promueve un candidato que empeora el error más del 5%. |
+| Fracción de columnas con `drift` | 0.30 | partición completa | Umbral inicial definido en `config.py`; se revisa con la operación del modelo. |
+| Tamaño de efecto por columna (KS / V de Cramer) | KS ≥ 0.10 (num), V de Cramer ≥ 0.10 (cat) | partición completa | Evita reaccionar a cambios pequeños aunque sean estadísticamente significativos. |
+| Degradación de la métrica de negocio | MAE +5% vs champion | holdout test | No se promueve un candidato que empeora el error más del 5%. |
+
+Los umbrales son valores operativos iniciales, no verdades permanentes. El equipo
+los revisa cuando haya nuevas corridas, datos de producción o incidentes.
 
 Dos advertencias que el umbral tiene que respetar:
 
@@ -54,26 +57,30 @@ quiere es que el modelo aprenda la distribución nueva.
 |---|---|---|
 | El gate aprueba el candidato | automático | tag `validation_status=passed` + `gate_motivo` en la versión |
 | El gate rechaza | automático (no se promueve) | tag `validation_status=failed` + motivo |
-| Se quiere promover pese al rechazo | Alejandro Taborda |  comentario en el PR + tag `gate_motivo` en la versión |
+| Se quiere promover pese al rechazo | responsable del modelo y revisión del equipo | comentario en el PR + tag `gate_motivo` en la versión |
 
 Que la evidencia del rechazo se guarde importa tanto como la de la aprobación:
 tres semanas después, "por qué no se promovió aquel modelo" es una pregunta real.
 
 ## 5. Rollback
 
-Rollback de modelo: mover el alias `@champion` a la versión anterior (ver código abajo). Es una escritura de metadatos y no requiere reentrenar ni redeploy.
+Rollback de modelo: mover el alias `@champion` a la versión anterior aprobada. Es
+una escritura de metadatos y no requiere reentrenar ni redeploy.
 
-Volver atrás es mover el alias `@champion` a la versión anterior:
+Volver atrás es mover el alias `@champion` a la versión anterior aprobada y
+registrada en el PR de promoción:
 
 ```python
 from mlflow import MlflowClient
 
-MlflowClient().set_registered_model_alias("beijing-air-pm25", "champion", "6")
+MlflowClient().set_registered_model_alias(
+    "beijing-air-pm25", "champion", "<version-anterior-aprobada>"
+)
 ```
 
 Es una escritura de metadatos —sub-segundo, sin reentrenar, sin rebuild de imagen,
 sin redeploy— y funciona porque las versiones del `registry` son inmutables: el
-artefacto de la versión 6 sigue siendo bit a bit el que estaba sirviendo. Esa
+artefacto de la versión anterior sigue siendo el que estaba sirviendo. Esa
 propiedad es la razón principal para referenciar el modelo por alias en lugar de
 copiarlo a un directorio.
 
