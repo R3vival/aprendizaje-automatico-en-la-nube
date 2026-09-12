@@ -106,7 +106,7 @@ def test_un_fallo_interno_no_filtra_el_detalle_al_cliente() -> None:
 
     El mensaje de una excepcion suele traer rutas del servidor, nombres de
     columnas y a veces credenciales. El detalle va al log; al cliente le llega
-    una respuesta estable.
+    una respuesta estable con un ``id_correlacion`` para rastrear el incidente.
     """
     cargador = CargadorModelo(uri="runs:/prueba/modelo", cargar_modelo=lambda _: ModeloQueFalla())
 
@@ -114,8 +114,65 @@ def test_un_fallo_interno_no_filtra_el_detalle_al_cliente() -> None:
         respuesta = cliente.post("/predict", json=_payload_valido())
 
     assert respuesta.status_code == 500
-    assert respuesta.json()["detail"] == DETALLE_ERROR_INTERNO
+    detalle = respuesta.json()["detail"]
+    assert detalle["detalle"] == DETALLE_ERROR_INTERNO
+    assert detalle["id_correlacion"]
     assert ModeloQueFalla.SECRETO not in respuesta.text
+
+
+class ModeloFalsoLote:
+    """Predictor que devuelve una prediccion por fila, para ejercitar el batch."""
+
+    def __init__(self) -> None:
+        self.columnas_recibidas: list[str] = []
+
+    def predict(self, datos: pd.DataFrame) -> np.ndarray:
+        self.columnas_recibidas = datos.columns.tolist()
+        return np.array([float(i + 1) for i in range(len(datos))])
+
+
+def test_predict_batch_devuelve_una_prediccion_por_lectura() -> None:
+    """El lote amortiza la inferencia y responde con la version que lo produjo."""
+    predictor = ModeloFalsoLote()
+    cargador = CargadorModelo(uri="runs:/prueba/modelo", cargar_modelo=lambda _: predictor)
+
+    with TestClient(crear_app(cargador)) as cliente:
+        respuesta = cliente.post(
+            "/predict/batch", json={"lecturas": [_payload_valido(), _payload_valido()]}
+        )
+
+    assert respuesta.status_code == 200
+    cuerpo = respuesta.json()
+    assert cuerpo["model_version"] == "desconocida"
+    assert len(cuerpo["predicciones"]) == 2
+    assert [p["prediccion_pm25"] for p in cuerpo["predicciones"]] == [1.0, 2.0]
+    assert predictor.columnas_recibidas == fc.FEATURES
+
+
+def test_predict_batch_rechaza_lote_vacio_o_sobredimensionado() -> None:
+    """El tope de lote vive en el schema y se valida antes de llamar al modelo."""
+    cargador = CargadorModelo(uri="runs:/prueba/modelo", cargar_modelo=_modelo_falso)
+
+    with TestClient(crear_app(cargador)) as cliente:
+        vacio = cliente.post("/predict/batch", json={"lecturas": []})
+        grande = cliente.post(
+            "/predict/batch",
+            json={"lecturas": [_payload_valido() for _ in range(501)]},
+        )
+
+    assert vacio.status_code == 422
+    assert grande.status_code == 422
+
+
+def test_predict_batch_rechaza_sin_modelo() -> None:
+    """Sin champion cargado, el batch tambien responde 503, no 500."""
+    cargador = CargadorModelo(uri="runs:/prueba/modelo", cargar_modelo=_fallar_carga)
+
+    with TestClient(crear_app(cargador)) as cliente:
+        respuesta = cliente.post("/predict/batch", json={"lecturas": [_payload_valido()]})
+
+    assert respuesta.status_code == 503
+    assert respuesta.json()["detail"] == DETALLE_MODELO_NO_DISPONIBLE
 
 
 def test_metrics_expone_las_metricas_propias_del_servicio() -> None:

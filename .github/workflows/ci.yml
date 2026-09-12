@@ -61,6 +61,21 @@ jobs:
       - name: Tests
         run: uv run pytest -m "not slow and not integration" --cov=src/BeijingAir --cov-report=term-missing
 
+  imagen:
+    name: Build de imagen (API) y usuario no-root
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build de la imagen
+        run: docker build -t beijing-air-api:${{ github.sha }} .
+
+      - name: La imagen no corre como root
+        run: |
+          uid=$(docker run --rm --entrypoint sh beijing-air-api:${{ github.sha }} -c 'id -u')
+          echo "uid=$uid"
+          test "$uid" -ne 0 || { echo "::error::la imagen corre como root (uid=0)"; exit 1; }
+
   secretos:
     name: Escaneo de secretos
     runs-on: ubuntu-latest

@@ -109,3 +109,18 @@ class CargadorModelo:
         if len(predicciones) != 1:
             raise ValueError("El predictor debe devolver exactamente una prediccion por solicitud.")
         return float(predicciones[0])
+
+    def predecir_lote(self, datos: pd.DataFrame) -> list[float]:
+        """Predice varias filas de una vez (batch).
+
+        A diferencia de ``predecir``, no exige que la salida tenga una sola fila:
+        amortiza el costo de inferencia por lote en una sola llamada.
+        """
+        if self._modelo is None:
+            raise RuntimeError("El modelo no esta cargado.")
+        predicciones = np.asarray(self._modelo.predictor.predict(datos)).reshape(-1)
+        if len(predicciones) != len(datos):
+            raise ValueError(
+                f"El predictor devolvio {len(predicciones)} predicciones para {len(datos)} filas."
+            )
+        return [float(p) for p in predicciones]

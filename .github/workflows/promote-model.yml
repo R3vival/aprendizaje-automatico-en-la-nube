@@ -7,18 +7,13 @@ on:
         description: Version del candidato; vacio usa el alias candidate.
         required: false
         type: string
-      max_mae_test:
-        description: MAE maximo aceptable sobre la particion test.
+      mejora_minima:
+        description: Margen relativo minimo de mejora del MAE sobre el holdout.
         required: true
-        default: "45"
+        default: "0.01"
         type: string
-      min_r2_test:
-        description: R2 minimo aceptable sobre la particion test.
-        required: true
-        default: "0"
-        type: string
-      max_empeoramiento_mae:
-        description: Fraccion maxima de empeoramiento frente a champion.
+      umbral_subgrupo:
+        description: Degradacion relativa maxima tolerada por subgrupo.
         required: true
         default: "0.05"
         type: string
@@ -63,14 +58,12 @@ jobs:
         env:
           CANDIDATE_VERSION: ${{ inputs.candidate_version }}
           DRY_RUN: ${{ inputs.dry_run }}
-          MAX_MAE_TEST: ${{ inputs.max_mae_test }}
-          MIN_R2_TEST: ${{ inputs.min_r2_test }}
-          MAX_EMPEORAMIENTO_MAE: ${{ inputs.max_empeoramiento_mae }}
+          MEJORA_MINIMA: ${{ inputs.mejora_minima }}
+          UMBRAL_SUBGRUPO: ${{ inputs.umbral_subgrupo }}
         run: |
           argumentos=(
-            --max-mae-test "$MAX_MAE_TEST"
-            --min-r2-test "$MIN_R2_TEST"
-            --max-empeoramiento-mae "$MAX_EMPEORAMIENTO_MAE"
+            --mejora-minima "$MEJORA_MINIMA"
+            --umbral-subgrupo "$UMBRAL_SUBGRUPO"
           )
           if [ -n "$CANDIDATE_VERSION" ]; then
             argumentos+=(--candidate-version "$CANDIDATE_VERSION")

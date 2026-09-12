@@ -54,12 +54,18 @@ def crear_pipeline(
     *,
     semilla: int = SEMILLA,
     n_estimators: int = 300,
+    **kwargs_extra: object,
 ) -> Pipeline:
     """Crea un pipeline que aprende transformaciones solo sobre el train.
 
     ``OneHotEncoder(handle_unknown='ignore')`` evita que una estacion o rumbo
     nuevo rompa el serving. El imputador dentro del pipeline conserva la misma
     transformacion cuando el modelo llegue a una API.
+
+    ``kwargs_extra`` son hiperparametros adicionales del Random Forest, que
+    pasan tal cual al constructor. Los usa la busqueda de hiperparametros
+    (``optimizar_hiperparametros``) para sobreescribir los valores por defecto
+    (``n_estimators``, ``min_samples_leaf``, ``max_depth``, ...).
     """
     preprocesador = ColumnTransformer(
         transformers=[
@@ -82,12 +88,16 @@ def crear_pipeline(
     if modelo == "baseline":
         estimador = DummyRegressor(strategy="mean")
     elif modelo == "bosque":
-        estimador = RandomForestRegressor(
-            n_estimators=n_estimators,
-            min_samples_leaf=3,
-            n_jobs=-1,
-            random_state=semilla,
-        )
+        parametros_bosque: dict[str, object] = {
+            "n_estimators": n_estimators,
+            "min_samples_leaf": 3,
+            "n_jobs": -1,
+            "random_state": semilla,
+        }
+        # Los overrides de la busqueda de hiperparametros ganan sobre los
+        # valores por defecto.
+        parametros_bosque.update(kwargs_extra)
+        estimador = RandomForestRegressor(**parametros_bosque)
     else:
         raise ValueError(f"Modelo no soportado: {modelo}")
 

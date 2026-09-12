@@ -1,140 +1,75 @@
-"""Gate auditable para promover un candidato de MLflow a ``champion``.
+"""Gate auditable para promover un candidato de MLflow a ``champion`` (Sesion 6).
 
-La decision usa exclusivamente la particion temporal ``test``. Los valores se
-leen de la corrida que produjo la version del Model Registry: si falta una
-metrica, el gate falla en lugar de asumir que el candidato es seguro.
+La decision usa exclusivamente la particion temporal ``test`` (el holdout fijo).
+El champion **se reevalua sobre el holdout actual** en cada corrida: si el
+holdout o el codigo de la metrica cambiaron desde que se entreno, los numeros
+guardados en su run no son comparables. La politica (los criterios) vive en
+``models/evaluate.py`` como funcion pura; este modulo es la capa de
+presentacion: carga los modelos, los evalúa, escribe los tags, mueve el alias y
+reporta exit codes.
+
+Tres exit codes, y por que son tres:
+- ``0`` promovido (o el candidato ya era el champion).
+- ``1`` rechazado por los criterios. ``@champion`` no se toca.
+- ``2`` no pudo medir (MLflow no responde, falta el holdout, no hay candidato).
+
+La distincion entre 1 y 2 importa: "el modelo no es lo bastante bueno" es un
+resultado exitoso del gate; "no pude medir" es una falla del gate. Confundirlos
+hace que un MLflow caido se lea como un modelo malo y alguien acabe reentrenando
+para arreglar un problema de red.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
-import math
+import os
+import sys
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass
-from typing import Protocol
+from typing import Any, Final
 
 import mlflow
 from mlflow.exceptions import MlflowException
 from mlflow.tracking import MlflowClient
 
 from BeijingAir.config import (
-    MAX_EMPEORAMIENTO_MAE,
-    MAX_MAE_TEST,
-    MIN_R2_TEST,
+    MEJORA_MINIMA_RELATIVA,
     MLFLOW_TRACKING_URI,
     MODELO_ALIAS,
     MODELO_ALIAS_CANDIDATO,
     MODELO_REGISTRADO,
+    PARTICION_TEST,
     TAG_VALIDACION,
+    UMBRAL_DEGRADACION_SUBGRUPO,
 )
 
-
-class VersionRegistry(Protocol):
-    """Atributos de una version que usa el gate, independiente del SDK concreto."""
-
-    @property
-    def version(self) -> str | int:
-        """Identificador de version que devuelve MLflow."""
-        ...
-
-    @property
-    def run_id(self) -> str | None:
-        """Corrida MLflow que creo esta version."""
-        ...
-
-
-class DatosCorrida(Protocol):
-    """Datos minimos de una corrida MLflow."""
-
-    @property
-    def metrics(self) -> Mapping[str, float]:
-        """Metricas registradas en la corrida."""
-        ...
-
-
-class CorridaMLflow(Protocol):
-    """Resultado de recuperar una corrida en MLflow."""
-
-    @property
-    def data(self) -> DatosCorrida:
-        """Datos asociados a la corrida."""
-        ...
-
-
-class ClienteRegistry(Protocol):
-    """Operaciones de Registry que necesita la promocion."""
-
-    def get_model_version_by_alias(self, name: str, alias: str) -> VersionRegistry: ...
-
-    def get_model_version(self, name: str, version: str) -> VersionRegistry: ...
-
-    def get_run(self, run_id: str) -> CorridaMLflow: ...
-
-    def set_registered_model_alias(self, name: str, alias: str, version: str) -> object: ...
-
-    def set_model_version_tag(self, name: str, version: str, key: str, value: str) -> object: ...
-
-
-@dataclass(frozen=True)
-class MetricasModelo:
-    """Metricas del holdout temporal que protegen una promocion."""
-
-    mae_test: float
-    r2_test: float
-
-    @classmethod
-    def desde_mapping(cls, metricas: Mapping[str, float]) -> MetricasModelo:
-        """Extrae las metricas obligatorias o falla antes de mover un alias."""
-        requeridas = ("mae_test", "r2_test")
-        faltantes = [metrica for metrica in requeridas if metrica not in metricas]
-        if faltantes:
-            raise ValueError(f"La corrida no tiene metricas de test requeridas: {faltantes}")
-
-        valores = cls(mae_test=float(metricas["mae_test"]), r2_test=float(metricas["r2_test"]))
-        if not all(math.isfinite(valor) for valor in (valores.mae_test, valores.r2_test)):
-            raise ValueError("Las metricas de test deben ser numeros finitos.")
-        return valores
+EXIT_PROMOVIDO: Final[int] = 0
+EXIT_RECHAZADO: Final[int] = 1
+EXIT_INFRA: Final[int] = 2
 
 
 @dataclass(frozen=True)
 class CriteriosPromocion:
-    """Reglas explicitas para aceptar un modelo en produccion."""
+    """Umbrales del gate: margen de mejora y tolerancia por subgrupo."""
 
-    max_mae_test: float = MAX_MAE_TEST
-    min_r2_test: float = MIN_R2_TEST
-    max_empeoramiento_mae: float = MAX_EMPEORAMIENTO_MAE
+    mejora_minima: float = MEJORA_MINIMA_RELATIVA
+    umbral_subgrupo: float = UMBRAL_DEGRADACION_SUBGRUPO
 
     def __post_init__(self) -> None:
-        if self.max_mae_test <= 0:
-            raise ValueError("max_mae_test debe ser mayor que cero.")
-        if self.max_empeoramiento_mae < 0:
-            raise ValueError("max_empeoramiento_mae no puede ser negativo.")
-
-
-@dataclass(frozen=True)
-class DecisionPromocion:
-    """Resultado explicable del gate, apto para logs de CI."""
-
-    aprobada: bool
-    razones: tuple[str, ...]
-
-
-@dataclass(frozen=True)
-class VersionModelo:
-    """Version de Registry junto a las metricas de la corrida que la produjo."""
-
-    version: str
-    metricas: MetricasModelo
+        if self.mejora_minima < 0:
+            raise ValueError("mejora_minima no puede ser negativa.")
+        if self.umbral_subgrupo < 0:
+            raise ValueError("umbral_subgrupo no puede ser negativo.")
 
 
 @dataclass(frozen=True)
 class ResultadoPromocion:
     """Resultado completo de revisar o ejecutar una promocion."""
 
-    candidato: VersionModelo
-    champion_anterior: VersionModelo | None
-    decision: DecisionPromocion
+    version_candidato: str
+    version_champion: str | None
+    decision: Any  # models.evaluate.DecisionGate
     promovido: bool
 
     def como_dict(self) -> dict[str, object]:
@@ -142,113 +77,126 @@ class ResultadoPromocion:
         return asdict(self)
 
 
+def _fallar_rapido() -> None:
+    """Baja el timeout y los reintentos HTTP de MLflow para las consultas de
+    metadatos. Con los defaults (7 reintentos, 120 s de timeout) un registry
+    caido cuelga el gate varios minutos antes de devolver el exit 2. Un fallback
+    que tarda minutos en activarse no es un fallback."""
+    os.environ.setdefault("MLFLOW_HTTP_REQUEST_TIMEOUT", "3")
+    os.environ.setdefault("MLFLOW_HTTP_REQUEST_MAX_RETRIES", "1")
+
+
+def _cargar_holdout() -> Any:
+    """Prepara el holdout fijo sobre el que se mide champion y candidato."""
+    from BeijingAir.data.loaders import preparar_particion
+
+    return preparar_particion(PARTICION_TEST)
+
+
+def _modelo_y_metadatos(cliente: MlflowClient, nombre: str, referencia: str) -> tuple[Any, str]:
+    """Carga un modelo por ``models:/nombre@alias`` o ``models:/nombre/version``.
+
+    Resuelve la version que referencia (el alias es mutable, la version no) y
+    devuelve ``(modelo_pyfunc, version)``.
+    """
+    if "@" in referencia:
+        _, alias = referencia.rsplit("@", 1)
+        version = cliente.get_model_version_by_alias(nombre, alias)
+        uri = f"models:/{nombre}@{alias}"
+    else:
+        numero = referencia
+        version = cliente.get_model_version(nombre, numero)
+        uri = f"models:/{nombre}/{numero}"
+    modelo = mlflow.pyfunc.load_model(uri)
+    return modelo, str(version.version)
+
+
 def evaluar_candidato(
-    candidato: MetricasModelo,
-    champion: MetricasModelo | None,
-    criterios: CriteriosPromocion,
-) -> DecisionPromocion:
-    """Decide con limites absolutos y sin degradar al champion existente."""
-    razones: list[str] = []
-    if candidato.mae_test > criterios.max_mae_test:
-        razones.append(
-            f"mae_test={candidato.mae_test:.3f} supera max_mae_test={criterios.max_mae_test:.3f}"
+    *,
+    version_candidata: str | None = None,
+    criterios: CriteriosPromocion = CriteriosPromocion(),
+    dry_run: bool = False,
+    nombre_modelo: str = MODELO_REGISTRADO,
+) -> ResultadoPromocion:
+    """Evalua el gate y, solo si aprueba y no es dry-run, mueve ``champion``.
+
+    Carga candidato y champion por alias, los reevalua sobre el holdout actual y
+    aplica la politica de ``models.evaluate.decidir_promocion``.
+
+    Args:
+        version_candidata: version a evaluar; ``None`` usa el alias candidate.
+        criterios: margen de mejora y tolerancia por subgrupo.
+        dry_run: evalua e informa sin escribir tag ni mover alias.
+        nombre_modelo: modelo registrado en el registry.
+
+    Returns:
+        ``ResultadoPromocion`` con la decision y si se promovio.
+
+    Raises:
+        MlflowException: si el registry no responde (infraestructura).
+    """
+    from BeijingAir.models import evaluate
+
+    _fallar_rapido()
+    mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
+    cliente = MlflowClient()
+
+    # El candidato se resuelve ANTES de preparar el holdout: si MLflow esta
+    # caido, la consulta de metadatos falla rapido (timeout 3 s) sin cargar datos.
+    referencia_candidato = version_candidata or f"{nombre_modelo}@{MODELO_ALIAS_CANDIDATO}"
+    modelo_candidato, version_candidato = _modelo_y_metadatos(
+        cliente, nombre_modelo, referencia_candidato
+    )
+
+    version_champion: str | None = None
+    met_champion: Mapping[str, float] | None = None
+    sub_champion: Mapping[str, float] | None = None
+    modelo_champion = None
+    try:
+        modelo_champion, version_champion = _modelo_y_metadatos(
+            cliente, nombre_modelo, f"{nombre_modelo}@{MODELO_ALIAS}"
         )
-    if candidato.r2_test < criterios.min_r2_test:
-        razones.append(
-            f"r2_test={candidato.r2_test:.3f} es menor que min_r2_test={criterios.min_r2_test:.3f}"
-        )
-    if champion is not None:
-        limite_champion = champion.mae_test * (1 + criterios.max_empeoramiento_mae)
-        if candidato.mae_test > limite_champion:
-            razones.append(
-                "mae_test del candidato empeora frente a champion: "
-                f"{candidato.mae_test:.3f} > {limite_champion:.3f}"
-            )
-    return DecisionPromocion(aprobada=not razones, razones=tuple(razones))
+    except MlflowException:
+        # Sin champion (primer modelo) o champion no existe: ambas son "no hay
+        # con que comparar", que es un resultado valido del gate. Un registry
+        # caido no llega aqui: habria fallado antes, en el candidato.
+        version_champion = None
 
+    holdout = _cargar_holdout()
+    met_candidato, sub_candidato = evaluate.evaluar_modelo(modelo_candidato, holdout)
+    if modelo_champion is not None:
+        met_champion, sub_champion = evaluate.evaluar_modelo(modelo_champion, holdout)
 
-class PromotorModelo:
-    """Conecta el gate puro con MLflow Registry y mueve solo el alias champion."""
+    decision = evaluate.decidir_promocion(
+        holdout,
+        met_candidato,
+        sub_candidato,
+        met_champion,
+        sub_champion,
+        mejora_minima=criterios.mejora_minima,
+        umbral_subgrupo=criterios.umbral_subgrupo,
+    )
 
-    def __init__(
-        self,
-        cliente: ClienteRegistry,
-        *,
-        nombre_modelo: str = MODELO_REGISTRADO,
-        alias_candidato: str = MODELO_ALIAS_CANDIDATO,
-        alias_champion: str = MODELO_ALIAS,
-    ) -> None:
-        self.cliente = cliente
-        self.nombre_modelo = nombre_modelo
-        self.alias_candidato = alias_candidato
-        self.alias_champion = alias_champion
+    promovido = decision.promover and not dry_run
 
-    def _version_con_metricas(self, version_registry: VersionRegistry) -> VersionModelo:
-        run_id = version_registry.run_id
-        if not run_id:
-            raise ValueError("La version del modelo no esta asociada a una corrida MLflow.")
-        corrida = self.cliente.get_run(run_id)
-        return VersionModelo(
-            version=str(version_registry.version),
-            metricas=MetricasModelo.desde_mapping(corrida.data.metrics),
+    # Los tags se escriben SIEMPRE (tambien al rechazar): la evidencia de por que
+    # un modelo NO llego a produccion vale tanto como la de por que si.
+    if not dry_run:
+        estado = "passed" if decision.promover else "failed"
+        cliente.set_model_version_tag(nombre_modelo, version_candidato, TAG_VALIDACION, estado)
+        cliente.set_model_version_tag(
+            nombre_modelo, version_candidato, "gate_motivo", decision.motivo
         )
 
-    def _candidato(self, version: str | None) -> VersionModelo:
-        if version is None:
-            registro = self.cliente.get_model_version_by_alias(
-                self.nombre_modelo, self.alias_candidato
-            )
-        else:
-            registro = self.cliente.get_model_version(self.nombre_modelo, version)
-        return self._version_con_metricas(registro)
+    if promovido:
+        cliente.set_registered_model_alias(nombre_modelo, MODELO_ALIAS, version_candidato)
 
-    def _champion(self) -> VersionModelo | None:
-        try:
-            registro = self.cliente.get_model_version_by_alias(
-                self.nombre_modelo, self.alias_champion
-            )
-        except MlflowException:
-            return None
-        return self._version_con_metricas(registro)
-
-    def promover(
-        self,
-        *,
-        criterios: CriteriosPromocion,
-        version_candidata: str | None = None,
-        dry_run: bool = False,
-    ) -> ResultadoPromocion:
-        """Evalua y, solo si aprueba, mueve ``champion`` a la version candidata."""
-        candidato = self._candidato(version_candidata)
-        champion = self._champion()
-        decision = evaluar_candidato(
-            candidato.metricas,
-            None if champion is None else champion.metricas,
-            criterios,
-        )
-        promovido = decision.aprobada and not dry_run
-
-        # Los tags se escriben SIEMPRE, tambien cuando se rechaza: la evidencia
-        # de por que un modelo NO llego a produccion vale tanto como la de por
-        # que si. Sin ellos, "por que no se promovio aquel candidato" no tiene
-        # respuesta tres semanas despues.
-        if not dry_run:
-            estado = "passed" if decision.aprobada else "failed"
-            self.cliente.set_model_version_tag(
-                self.nombre_modelo, candidato.version, TAG_VALIDACION, estado
-            )
-            self.cliente.set_model_version_tag(
-                self.nombre_modelo,
-                candidato.version,
-                "gate_motivo",
-                "; ".join(decision.razones),
-            )
-
-        if promovido:
-            self.cliente.set_registered_model_alias(
-                self.nombre_modelo, self.alias_champion, candidato.version
-            )
-        return ResultadoPromocion(candidato, champion, decision, promovido)
+    return ResultadoPromocion(
+        version_candidato=version_candidato,
+        version_champion=version_champion,
+        decision=decision,
+        promovido=promovido,
+    )
 
 
 def _argumentos(argumentos: Sequence[str] | None = None) -> argparse.Namespace:
@@ -257,40 +205,76 @@ def _argumentos(argumentos: Sequence[str] | None = None) -> argparse.Namespace:
         "--candidate-version",
         help="Version a evaluar; si se omite, se usa el alias candidate.",
     )
-    parser.add_argument("--max-mae-test", type=float, default=MAX_MAE_TEST)
-    parser.add_argument("--min-r2-test", type=float, default=MIN_R2_TEST)
     parser.add_argument(
-        "--max-empeoramiento-mae",
+        "--mejora-minima",
         type=float,
-        default=MAX_EMPEORAMIENTO_MAE,
-        help="Fraccion maxima permitida de empeoramiento frente a champion.",
+        default=MEJORA_MINIMA_RELATIVA,
+        help="Margen relativo minimo de mejora del MAE sobre el holdout.",
+    )
+    parser.add_argument(
+        "--umbral-subgrupo",
+        type=float,
+        default=UMBRAL_DEGRADACION_SUBGRUPO,
+        help="Degradacion relativa maxima tolerada por subgrupo.",
     )
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Evalua el gate y muestra el resultado, sin mover el alias champion.",
+        help="Evalua el gate y muestra el resultado, sin escribir tag ni mover alias.",
     )
     return parser.parse_args(argumentos)
 
 
-def main(argumentos: Sequence[str] | None = None) -> None:
-    """Punto de entrada para la ejecucion manual protegida de CI/CD."""
+def main(argumentos: Sequence[str] | None = None) -> int:
+    """Punto de entrada de ``python -m BeijingAir.models.promote``."""
     opciones = _argumentos(argumentos)
     criterios = CriteriosPromocion(
-        max_mae_test=opciones.max_mae_test,
-        min_r2_test=opciones.min_r2_test,
-        max_empeoramiento_mae=opciones.max_empeoramiento_mae,
+        mejora_minima=opciones.mejora_minima,
+        umbral_subgrupo=opciones.umbral_subgrupo,
     )
-    mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
-    resultado = PromotorModelo(MlflowClient()).promover(
-        criterios=criterios,
-        version_candidata=opciones.candidate_version,
-        dry_run=opciones.dry_run,
-    )
-    print(json.dumps(resultado.como_dict(), ensure_ascii=False, indent=2))
-    if not resultado.decision.aprobada:
-        raise SystemExit(2)
+    try:
+        resultado = evaluar_candidato(
+            version_candidata=opciones.candidate_version,
+            criterios=criterios,
+            dry_run=opciones.dry_run,
+        )
+    except MlflowException as error:
+        print(
+            f"No se pudo hablar con MLflow en {MLFLOW_TRACKING_URI} "
+            f"({type(error).__name__}). No es un problema del modelo: es "
+            "infraestructura. Levanta el tracking server y vuelve a correr el gate."
+        )
+        return EXIT_INFRA
+    except Exception as error:
+        print(
+            f"No se pudo medir el gate ({type(error).__name__}): {error}. "
+            "No es una decision del modelo."
+        )
+        return EXIT_INFRA
+
+    resumen = {
+        "version_candidato": resultado.version_candidato,
+        "version_champion": resultado.version_champion,
+        "promover": resultado.decision.promover,
+        "motivo": resultado.decision.motivo,
+        "criterios": [
+            {"nombre": c.nombre, "estado": c.estado, "detalle": c.detalle}
+            for c in resultado.decision.criterios
+        ],
+    }
+    print(json.dumps(resumen, ensure_ascii=False, indent=2))
+
+    if not resultado.decision.promover:
+        print(
+            f"RECHAZADO — @champion no se toca. Sigue en la version {resultado.version_champion}."
+        )
+        return EXIT_RECHAZADO
+    if opciones.dry_run:
+        print("--dry-run: habria promovido, pero no se escribio el alias.")
+    else:
+        print(f"PROMOVIDO — @champion ahora apunta a la version {resultado.version_candidato}.")
+    return EXIT_PROMOVIDO
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

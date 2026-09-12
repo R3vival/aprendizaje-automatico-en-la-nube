@@ -18,7 +18,7 @@ PY := $(UV) run
 # make, no del shell: funciona igual en bash, cmd y PowerShell.
 export PYTHONUTF8 = 1
 
-.PHONY: help setup data smoke test test-fast lint format typecheck check validate-data mlflow prefect-server train flow serve-flow serve promote promote-check drift up down clean
+.PHONY: help setup data smoke test test-fast lint format typecheck check validate-data mlflow prefect-server train hpo model-card flow serve-flow deploy-flow work-pool worker batch serve promote promote-check drift up down clean
 # =============================================================================
 help: ## Muestra los targets disponibles
 	@echo ""
@@ -78,11 +78,20 @@ mlflow: ## Inicia el servidor local de tracking en http://127.0.0.1:5001
 train: ## Entrena baseline y bosque, y registra ambos en MLflow
 	$(PY) python -m BeijingAir.models.train
 
+hpo: ## Busca hiperparametros del bosque con Optuna (runs anidados)
+	$(PY) python -m BeijingAir.models.train --hpo --trials 20
+
+model-card: ## Genera docs/model-card.md desde el modelo registrado
+	$(PY) python scripts/model_card.py
+
 # =============================================================================
 # Monitoreo
 # =============================================================================
 drift: ## Reporte de drift: referencia vs produccion simulada
 	$(PY) python -m BeijingAir.monitoring.check_drift
+
+batch: ## Predice sobre la particion de produccion y persiste con trazabilidad
+	$(PY) python -m BeijingAir.flows.batch
 
 flow: ## Pipeline de entrenamiento orquestado con Prefect
 	$(PY) python -m BeijingAir.flows.training
@@ -90,8 +99,17 @@ flow: ## Pipeline de entrenamiento orquestado con Prefect
 prefect-server: ## Inicia Prefect en http://127.0.0.1:4200
 	$(PY) prefect server start
 
-serve-flow: ## Deja servido el schedule mensual de entrenamiento en Prefect
+serve-flow: ## Deja servido el schedule mensual de entrenamiento en Prefect (modo clase)
 	$(PY) python -m BeijingAir.flows.training --serve
+
+deploy-flow: ## Crea un deployment persistente contra el work pool (Prefect 3)
+	$(PY) python -m BeijingAir.flows.deploy deploy
+
+work-pool: ## Crea el work pool de tipo process (si no existe)
+	$(PY) prefect work-pool create beijing-air-pool --type process || true
+
+worker: ## Levanta un worker del work pool (dejar esta terminal abierta)
+	$(PY) prefect worker start --pool beijing-air-pool
 
 serve: ## Inicia la API local de prediccion en http://127.0.0.1:8000
 	$(PY) uvicorn BeijingAir.api.main:app --host 127.0.0.1 --port 8000

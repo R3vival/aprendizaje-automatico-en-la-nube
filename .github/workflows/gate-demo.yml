@@ -1,0 +1,69 @@
+name: Gate demo (acepta y rechaza)
+
+on:
+  workflow_dispatch:
+
+# Evidencia del criterio 3 del taller S06: el gate ACEPTA y RECHAZA en un solo
+# log de Actions. Los runners no pueden llegar a un MLflow local, asi que el
+# server se levanta dentro del runner con SQLite, se registran los candidatos y
+# se corre el gate en el mismo job.
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    env:
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Instalar dependencias
+        run: uv sync --group dev --locked
+
+      - name: MLflow dentro del runner
+        run: |
+          uv run mlflow server --backend-store-uri sqlite:///mlflow.db \
+            --default-artifact-root ./mlartifacts --host 127.0.0.1 --port 5001 &
+          for i in $(seq 1 60); do
+            curl -sf http://127.0.0.1:5001/health >/dev/null && break
+            sleep 2
+          done
+
+      - name: Datos
+        run: uv run python -m BeijingAir.data.descarga
+
+      - name: Primer modelo -> se promueve (no hay champion)
+        run: |
+          uv run python -m BeijingAir.models.train --registrar
+          uv run python -m BeijingAir.models.promote
+          test "$?" -eq 0 || { echo "::error::se esperaba exit 0 al promover el primer modelo"; exit 1; }
+
+      - name: Candidato identico -> RECHAZADO (no mejora el margen)
+        # Mismo seed y mismos datos producen un bosque identico al champion:
+        # no mejora el 1% del margen, asi que el gate lo rechaza por anti-churn.
+        run: |
+          uv run python -m BeijingAir.models.train --registrar
+          set +e
+          uv run python -m BeijingAir.models.promote
+          codigo=$?
+          set -e
+          test "$codigo" -eq 1 || { echo "::error::se esperaba exit 1 y salio $codigo"; exit 1; }
+          echo "RECHAZADO verificado (exit 1): el champion no se movio."
+
+      - name: No pudo medir -> exit 2 (infraestructura)
+        run: |
+          pkill -f "mlflow server" || true
+          sleep 2
+          set +e
+          uv run python -m BeijingAir.models.promote
+          codigo=$?
+          set -e
+          test "$codigo" -eq 2 || { echo "::error::se esperaba exit 2 y salio $codigo"; exit 1; }
+          echo "INFRA verificado (exit 2): MLflow caido se distingue de un modelo malo."
