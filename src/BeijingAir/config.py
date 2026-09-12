@@ -26,6 +26,8 @@ __all__ = [
     "LICENCIA_URL",
     "MAX_EMPEORAMIENTO_MAE",
     "MAX_MAE_TEST",
+    "MEJORA_MINIMA_RELATIVA",
+    "MIN_FILAS_SUBGRUPO",
     "MIN_R2_TEST",
     "MLFLOW_EXPERIMENT",
     "MLFLOW_PORT",
@@ -49,6 +51,7 @@ __all__ = [
     "SEMILLA",
     "TAG_VALIDACION",
     "TODAS_LAS_PARTICIONES",
+    "UMBRAL_DEGRADACION_SUBGRUPO",
     "UMBRAL_DRIFT_COLUMNAS",
     "URL_DATASET",
     "VERSION",
@@ -165,6 +168,20 @@ API_PORT: Final[int] = int(os.getenv("API_PORT", "8000"))
 MAX_MAE_TEST: Final[float] = float(os.getenv("MAX_MAE_TEST", "45.0"))
 MIN_R2_TEST: Final[float] = float(os.getenv("MIN_R2_TEST", "0.0"))
 MAX_EMPEORAMIENTO_MAE: Final[float] = float(os.getenv("MAX_EMPEORAMIENTO_MAE", "0.05"))
+
+#: Margen relativo minimo de mejora del MAE sobre el holdout para promover.
+#: Exigir un margen (y no un simple "menor que") evita el churn de modelos:
+#: con ruido de muestreo, dos modelos equivalentes se alternarian en produccion
+#: y cada rotacion cuesta un despliegue. Es la metrica que decide el gate.
+MEJORA_MINIMA_RELATIVA: Final[float] = float(os.getenv("MEJORA_MINIMA_RELATIVA", "0.01"))
+
+#: Degradacion relativa maxima tolerada en un subgrupo del gate. Es mas laxo que
+#: la mejora global exigida porque un subgrupo tiene menos datos y mas varianza.
+UMBRAL_DEGRADACION_SUBGRUPO: Final[float] = 0.05
+
+#: Tamano minimo de un subgrupo para decidir con el. Por debajo, su error esta
+#: dominado por el ruido de muestreo y el subgrupo se reporta pero no decide.
+MIN_FILAS_SUBGRUPO: Final[int] = 50
 
 # =============================================================================
 # Orquestacion
