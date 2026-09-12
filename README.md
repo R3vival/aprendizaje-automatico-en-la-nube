@@ -85,6 +85,9 @@ make serve          # inicia la API de predicción en http://127.0.0.1:8000
 make promote-check  # evalúa candidate contra el gate, sin mover el alias champion
 make drift          # reporte de drift entre referencia y producción simulada
 make clean          # borra caches y artefactos temporales
+make up             # levanta el stack: MLflow + API en contenedores
+make down           # detiene el stack
+make promote        # evalúa el gate y mueve @champion si aprueba
 ```
 
 ## Los datos
@@ -130,6 +133,9 @@ uv run prefect server start   # terminal 1 — UI en http://127.0.0.1:4200
 make mlflow                   # terminal 2 — UI en http://127.0.0.1:5001
 make flow                     # terminal 3 — el pipeline
 ```
+
+> Si el stack de Docker está arriba (`make up`), **no corras `make mlflow`**: el
+> contenedor ya ocupa el puerto 5001. Usa uno u otro, no los dos.
 
 ### Las seis tasks
 
@@ -192,12 +198,103 @@ reproducible el artefacto.
 (en `data/loaders.py`), no como task independiente. Sacarla haría el ahorro
 visible en el total.
 
+### El flow no reentrena si los datos no cambiaron
+
+`debe_reentrenar()` compara el SHA-256 del dataset contra el de la última
+corrida. Si es idéntico, el flow termina sin entrenar y lo dice en el log. El
+schedule mensual despierta el pipeline; los datos deciden si vale la pena
+ejecutarlo.
+
+Para forzar una corrida, al probar cambios de código o hiperparámetros:
+
+```bash
+uv run python -m BeijingAir.flows.training --forzar
+```
+
 ### Nota de portabilidad
 
-`make flow` fuerza `PYTHONUTF8=1`. MLflow imprime emojis en sus mensajes, y
-Windows usa `cp1252` cuando la salida no va a una consola — lo que hacía fallar
-el pipeline con `UnicodeEncodeError` al redirigir la salida. **Habría roto el CI**,
-que captura la salida igual.
+El `Makefile` exporta `PYTHONUTF8=1` para todos los targets. MLflow imprime
+emojis en sus mensajes, y Windows usa `cp1252` cuando la salida no va a una
+consola — lo que hacía fallar el pipeline con `UnicodeEncodeError` al redirigir
+la salida. **Habría roto el CI**, que captura la salida igual.
+
+Se usa la directiva `export` de make y no el prefijo `VARIABLE=valor comando`,
+que es sintaxis de shell: en Windows `make` cae a `cmd.exe`, que no la entiende
+y falla con `'PYTHONUTF8' is not recognized`.
+
+## Despliegue local con Docker
+
+El stack levanta dos servicios en contenedores: el servidor de MLflow (tracking + registry) y la API de inferencia.
+
+```bash
+make up      # levanta MLflow + API
+make down    # los detiene
+```
+
+| Servicio | URL | Que hace |
+|---|---|---|
+| MLflow | http://127.0.0.1:5001 | Tracking y Model Registry (SQLite + artefactos en volumen) |
+| API | http://127.0.0.1:8000/docs | Sirve el modelo resuelto por alias `@champion` |
+
+### Cadena completa hasta una prediccion
+
+`make up` deja los contenedores arriba, pero el registry arranca vacio: la API
+responde `degradado` hasta que exista un modelo con alias `@champion`.
+
+```bash
+make up                       # 1. contenedores arriba
+make prefect-server           # 2. en otra terminal
+make flow                     # 3. entrena y registra v1 como @candidate
+make promote                  # 4. evalua el gate y mueve @champion
+docker compose restart api    # 5. la API resuelve el alias al arrancar
+```
+
+El paso 5 hace falta porque la API resuelve el alias **al iniciar**, no en cada
+peticion. Y `make flow` no reentrena si el SHA-256 del dataset no cambio; para
+forzarlo: `uv run python -m BeijingAir.flows.training --forzar`.
+
+### Verificacion
+
+```bash
+curl http://127.0.0.1:8000/health
+```
+
+```json
+{"estado":"ok","modelo_cargado":true,"model_uri":"models:/beijing-air-pm25@champion","model_version":"1"}
+```
+
+```bash
+curl -X POST http://127.0.0.1:8000/predict \
+  -H "Content-Type: application/json" \
+  -d '{"datetime":"2017-01-15T08:00:00","station":"Aotizhongxin","wd":"NW","PM10":180.0,"SO2":25.0,"NO2":70.0,"CO":1800.0,"O3":20.0,"TEMP":-3.5,"PRES":1025.0,"DEWP":-15.0,"RAIN":0.0,"WSPM":1.8}'
+```
+
+```json
+{"prediccion_pm25":165.58487430162435,"model_name":"beijing-air-pm25","model_version":"1","latencia_ms":118.7653560000399}
+```
+
+En PowerShell `curl` es un alias de `Invoke-WebRequest`: usa `curl.exe` y pasa el
+cuerpo desde un archivo con `-d "@archivo.json"`.
+
+La imagen no corre como root:
+
+```bash
+docker run --rm --entrypoint sh beijing-air-api -c 'id -u'
+# 10001
+```
+
+### Dos decisiones de configuracion del servidor MLflow
+
+**`--allowed-hosts`** — MLflow 3.x responde 403 a las peticiones cuyo `Host` no
+reconoce (proteccion contra DNS rebinding). La API se conecta como
+`http://mlflow:5001`, asi que ese nombre debe estar en la lista. Se listan los
+hosts necesarios en vez de `*`, que la propia documentacion desaconseja.
+
+**`--serve-artifacts`** — el servidor recibe y sirve los archivos del modelo por
+HTTP (URIs `mlflow-artifacts:/`). Con `--default-artifact-root` apuntando a una
+ruta local, cada cliente escribe el modelo en esa ruta **en su propia maquina**:
+entrenando desde Windows el modelo termina en `C:\mlflow\artifacts` y el
+contenedor no lo encuentra.
 
 ## Monitoreo de drift
 
@@ -258,35 +355,26 @@ Los umbrales, su justificación y el análisis completo están en
 | [`docs/politica-de-reentrenamiento.md`](docs/politica-de-reentrenamiento.md) | Trigger, umbrales, rollback, alertas |
 | [`docs/adr/`](docs/adr/) | Registro de decisiones de arquitectura |
 
-Para la sesión de orquestación usa tres terminales: `make mlflow`,
-`make prefect-server` y `make flow`. El flow reintenta solo la descarga, valida
-los datos antes de entrenar y registra el bosque como `candidate` en MLflow. El
-schedule mensual de `make serve-flow` despierta el flow, pero este solo
-reentrena si cambió el hash del dataset; no promueve modelos automáticamente.
 
-## Deployment: API y Docker
+## Contrato de la API
 
-La API se ejecuta con `uv run uvicorn BeijingAir.api.main:app --host 127.0.0.1 --port 8000`
-(o `make serve` donde `make` esté disponible). Abre
-`http://127.0.0.1:8000/docs` para probarla. Su contrato recibe una lectura
-cruda: la API deriva las variables de calendario mediante el mismo código que
-el entrenamiento y no acepta columnas desconocidas.
+La API recibe una lectura horaria cruda y deriva las variables de calendario con
+el mismo código que el entrenamiento. Rechaza columnas desconocidas
+(`extra="forbid"`) y valida rangos por columna: un `PM10` de 5000 o un campo de
+más devuelven 422, no una predicción silenciosamente mala.
 
-El servicio busca exclusivamente `models:/beijing-air-pm25@champion` en MLflow.
-Como la promoción aún corresponde a la siguiente etapa, es normal que al inicio
-`GET /health` responda `degradado` y `POST /predict` responda 503: es una
-protección para no entregar el alias `candidate` a usuarios. Para usar otro
-Registry o URI se configura `MODELO_URI` antes de arrancar.
+Resuelve exclusivamente `models:/beijing-air-pm25@champion`. Si no hay champion
+registrado, `GET /health` responde `degradado` y `POST /predict` responde 503.
+Es deliberado: la API prefiere degradarse antes que servir un `candidate` sin
+aprobar, y antes que entrar en un ciclo de reinicios.
+
+Para desarrollo, sin Docker:
 
 ```bash
-# Requiere Docker Desktop encendido. No incluye datos ni modelos en la imagen.
-docker build -t beijing-air-api .
-docker run --rm -p 8000:8000 \
-  -e MLFLOW_TRACKING_URI=http://host.docker.internal:5001 \
-  beijing-air-api
+make serve   # http://127.0.0.1:8000/docs
 ```
 
-Consulta los detalles y la decisión en
+Detalles y decisión en
 [`docs/adr/0003-serving-api-y-registry.md`](docs/adr/0003-serving-api-y-registry.md).
 
 ## Promoción controlada del modelo
@@ -300,6 +388,14 @@ mover ningún alias, inicia MLflow y ejecuta:
 ```bash
 uv run python -m BeijingAir.models.promote --dry-run
 ```
+Contra el MLflow local (el del stack de Docker), la promoción se ejecuta a mano:
+
+```bash
+make promote-check   # solo evalúa e imprime el veredicto
+make promote         # evalúa y, si aprueba, mueve @champion
+```
+
+En el registry compartido la mutación no se hace desde una máquina personal:
 
 La mutación real se hace solo desde el workflow manual **Promover modelo** de
 GitHub Actions, en el entorno `production`. Antes de usarlo, el administrador
