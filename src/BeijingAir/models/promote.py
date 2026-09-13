@@ -156,10 +156,15 @@ def evaluar_candidato(
         modelo_champion, version_champion = _modelo_y_metadatos(
             cliente, nombre_modelo, f"{nombre_modelo}@{MODELO_ALIAS}"
         )
-    except MlflowException:
-        # Sin champion (primer modelo) o champion no existe: ambas son "no hay
-        # con que comparar", que es un resultado valido del gate. Un registry
-        # caido no llega aqui: habria fallado antes, en el candidato.
+    except MlflowException as error:
+        # Solo "el alias no existe" es "no hay con que comparar" (primer modelo),
+        # que es un resultado valido del gate. Cualquier otro fallo -- artefacto
+        # corrupto, permisos, el registry caido entre esta consulta y la del
+        # candidato -- se propaga y sale por EXIT_INFRA. Tratarlo como "no hay
+        # champion" aprobaria el criterio de mejora solo y el candidato pisaria
+        # a un champion real.
+        if getattr(error, "error_code", "") != "RESOURCE_DOES_NOT_EXIST":
+            raise
         version_champion = None
 
     holdout = _cargar_holdout()
@@ -265,9 +270,12 @@ def main(argumentos: Sequence[str] | None = None) -> int:
     print(json.dumps(resumen, ensure_ascii=False, indent=2))
 
     if not resultado.decision.promover:
-        print(
-            f"RECHAZADO — @champion no se toca. Sigue en la version {resultado.version_champion}."
+        destino = (
+            f"Sigue en la version {resultado.version_champion}."
+            if resultado.version_champion is not None
+            else "No habia champion y el registry sigue sin uno."
         )
+        print(f"RECHAZADO — @champion no se toca. {destino}")
         return EXIT_RECHAZADO
     if opciones.dry_run:
         print("--dry-run: habria promovido, pero no se escribio el alias.")
