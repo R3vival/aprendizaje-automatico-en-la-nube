@@ -1,23 +1,23 @@
 """Fixtures compartidas por las pruebas de ``models/``.
- 
+
 El holdout sintetico vive aqui y no dentro de un modulo de tests porque lo usan
 tanto la prueba de la politica (``test_evaluate.py``) como la de la capa que
 habla con MLflow (``test_promote.py``). Duplicarlo garantizaria que un dia
 divergieran y que una de las dos dejara de probar lo que cree probar.
 """
- 
+
 from __future__ import annotations
- 
+
 import pandas as pd
 import pytest
- 
+
 from BeijingAir.data import contract as dc
- 
- 
+
+
 @pytest.fixture
 def holdout_valido() -> pd.DataFrame:
     """Un holdout sintetico que cumple el contrato de datos procesados.
- 
+
     120 filas, mitad invierno y mitad verano, para que ambos subgrupos superen
     el minimo de filas que exige ``metricas_por_subgrupo``.
     """
